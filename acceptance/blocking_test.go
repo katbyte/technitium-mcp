@@ -163,7 +163,30 @@ func TestBlocking(t *testing.T) {
 		t.Errorf("the blocked name resolved on two servers of which one blocks it = %v", resolved)
 	}
 
-	// the lists, side by side
+	// the lists, side by side. In a cluster the second node takes the primary's lists when it is told of a change or next fetches the configuration: one that has not followed in a while is asked to fetch now
+	if clustered() {
+		first, second := mustClient(t, world.First), mustClient(t, world.Second)
+		ctx := t.Context()
+		together := func() bool {
+			blocked1, err1 := first.BlockedNames(ctx)
+			blocked2, err2 := second.BlockedNames(ctx)
+			allowed1, err3 := first.AllowedNames(ctx)
+			allowed2, err4 := second.AllowedNames(ctx)
+			for _, names := range [][]string{blocked1, blocked2, allowed1, allowed2} {
+				slices.Sort(names)
+			}
+
+			return errors.Join(err1, err2, err3, err4) == nil && slices.Equal(blocked1, blocked2) && slices.Equal(allowed1, allowed2)
+		}
+		if !acctest.EventuallyWithin(30*time.Second, together) {
+			if err := second.ResyncCluster(ctx); err != nil {
+				t.Logf("%s asked to fetch the configuration: %v", world.Second, err)
+			}
+			if !acctest.EventuallyWithin(2*time.Minute, together) {
+				t.Errorf("%s never took the lists %s has", world.Second, world.First)
+			}
+		}
+	}
 	lists := suite.Call(t, "block_list", map[string]any{"find": "acc"})
 	for _, row := range acctest.Rows(t, lists["servers"], "servers") {
 		if row["blocking"] != "on" || row["answers"] != "NxDomain" || row["lists"] != nil || row["error"] != nil {

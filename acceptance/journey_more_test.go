@@ -311,6 +311,58 @@ func TestJourneyWritesDoneTwice(t *testing.T) {
 	}
 }
 
+// heldByServer is everything a server holds, as one text to compare before
+// and after: its zones to the serial, its settings, its lists, its scopes,
+// its groups and accounts, its apps, its permissions and its keys.
+func heldByServer(t *testing.T, c *technitium.Client) string {
+	t.Helper()
+
+	ctx := t.Context()
+	zones, err := c.Zones(ctx, technitium.ZoneFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	said := make([]string, 0, len(zones)+16)
+	for _, z := range zones {
+		said = append(said, fmt.Sprintf("zone %s %s serial %d disabled %v %s", z.Name, z.Type, z.SOASerial, z.Disabled, z.DNSSECStatus))
+	}
+	settings, err := c.AllSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// when the lists were last fetched and are next due moves by itself
+	for _, moving := range []string{"blockListNextUpdatedOn", "uptimestamp"} {
+		delete(settings, moving)
+	}
+	said = append(said, fmt.Sprintf("settings %v", settings))
+	for what, read := range map[string]func() (any, error){
+		"blocked": func() (any, error) { return c.BlockedNames(ctx) },
+		"allowed": func() (any, error) { return c.AllowedNames(ctx) },
+		"scopes":  func() (any, error) { return c.Scopes(ctx) },
+		"groups":  func() (any, error) { return c.Groups(ctx) },
+		"apps":    func() (any, error) { return c.Apps(ctx) },
+		"access":  func() (any, error) { return c.Permissions(ctx) },
+		"keys":    func() (any, error) { return c.TSIGKeyNames(ctx) },
+		"sso":     func() (any, error) { return c.SSO(ctx, false) },
+	} {
+		got, readErr := read()
+		if readErr != nil {
+			t.Fatalf("reading the server's %s: %v", what, readErr)
+		}
+		said = append(said, fmt.Sprintf("%s %+v", what, got))
+	}
+	users, err := c.Users(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range users {
+		said = append(said, fmt.Sprintf("user %s disabled %v", u.Username, u.Disabled))
+	}
+	slices.Sort(said)
+
+	return strings.Join(said, "\n")
+}
+
 // Reads change nothing: every tool that only reads is called, and the server
 // holds afterwards exactly what it held before - its zones to the serial,
 // its settings, its lists, its scopes, its accounts and its apps.
@@ -320,53 +372,7 @@ func TestJourneyReadsChangeNothing(t *testing.T) {
 	names(t)
 	first := world.First
 	c := mustClient(t, first)
-	held := func() string {
-		t.Helper()
-		ctx := t.Context()
-		zones, err := c.Zones(ctx, technitium.ZoneFilter{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		said := make([]string, 0, len(zones)+16)
-		for _, z := range zones {
-			said = append(said, fmt.Sprintf("zone %s %s serial %d disabled %v %s", z.Name, z.Type, z.SOASerial, z.Disabled, z.DNSSECStatus))
-		}
-		settings, err := c.AllSettings(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		// when the lists were last fetched and are next due moves by itself
-		for _, moving := range []string{"blockListNextUpdatedOn", "uptimestamp"} {
-			delete(settings, moving)
-		}
-		said = append(said, fmt.Sprintf("settings %v", settings))
-		for what, read := range map[string]func() (any, error){
-			"blocked": func() (any, error) { return c.BlockedNames(ctx) },
-			"allowed": func() (any, error) { return c.AllowedNames(ctx) },
-			"scopes":  func() (any, error) { return c.Scopes(ctx) },
-			"groups":  func() (any, error) { return c.Groups(ctx) },
-			"apps":    func() (any, error) { return c.Apps(ctx) },
-			"access":  func() (any, error) { return c.Permissions(ctx) },
-			"keys":    func() (any, error) { return c.TSIGKeyNames(ctx) },
-			"sso":     func() (any, error) { return c.SSO(ctx, false) },
-		} {
-			got, readErr := read()
-			if readErr != nil {
-				t.Fatalf("reading the server's %s: %v", what, readErr)
-			}
-			said = append(said, fmt.Sprintf("%s %+v", what, got))
-		}
-		users, err := c.Users(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, u := range users {
-			said = append(said, fmt.Sprintf("user %s disabled %v", u.Username, u.Disabled))
-		}
-		slices.Sort(said)
-
-		return strings.Join(said, "\n")
-	}
+	held := func() string { return heldByServer(t, c) }
 
 	// what each read tool is asked, where it needs asking something; the rest are called with nothing
 	args := map[string]map[string]any{

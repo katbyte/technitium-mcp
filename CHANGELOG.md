@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- a journey that makes a first setup from nothing with the tools alone - zones with their records and PTRs, a forwarder zone, a DHCP scope, a blocked and an allowed name, a group with an account, a token and the right to change the zone, a transfer key, a setting, the zone signed - has every audit find nothing of its own, takes it all down again in the order that lets each go, and checks the server holds exactly what it held before
+
 ## 0.1.0 (2026-10-10)
 
 ### Added

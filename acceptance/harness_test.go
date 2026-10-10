@@ -50,7 +50,7 @@ var ownZones = []string{firstZone, reverseZone, writeReverseZone, dhcpZone, setu
 // leftZones are the zones the tests of the changes make and delete again:
 // taken away with the rest when a run starts and when it ends, on whichever
 // server has them and as whatever type.
-var leftZones = []string{madeZone, sourceZone, cloneZone, signedZone, hostZone, hostReverse, messZone, messReverse, lifeZone, lifeClone, restoredZone, busyZone, bothZone, kindsZone, kindsForward, keyedZone, importZone}
+var leftZones = []string{madeZone, sourceZone, cloneZone, signedZone, hostZone, hostReverse, messZone, messReverse, lifeZone, lifeClone, restoredZone, busyZone, bothZone, kindsZone, kindsForward, keyedZone, importZone, setupJourneyZone, setupJourneyReverse, setupJourneyForward}
 
 // fixture is a record a server is given in the shared zone.
 type fixture struct {
