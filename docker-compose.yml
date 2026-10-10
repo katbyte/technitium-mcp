@@ -1,0 +1,37 @@
+# Default always-on deployment: runs the released image from ghcr.io and serves MCP over HTTP.
+# To run a local build instead: make docker, then set image: technitium-mcp (or add build: .).
+# Secrets (TECHNITIUM_TOKEN, TECHNITIUM_AUTH_TOKEN) come from a gitignored .env next to this file,
+# see .env.example. Then register it in Claude Code:
+#   claude mcp add --transport http technitium http://<host>:8080/mcp \
+#     --header "Authorization: Bearer <TECHNITIUM_AUTH_TOKEN>"
+
+networks:
+  net:
+    name: net
+
+services:
+  technitium-mcp:
+    image: ghcr.io/katbyte/technitium-mcp:latest
+    container_name: technitium-mcp
+    restart: always
+    logging:
+      options:
+        max-size: 100m
+        max-file: "1"
+    networks:
+      net:
+    # the DNS servers are named by address, not by name: this container must be able to reach
+    # them while the thing that resolves names is the thing being looked at
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      - "TZ=America/Vancouver"
+      # one server takes its url alone (TECHNITIUM_SERVER=http://192.168.1.2:5380); several are named
+      - "TECHNITIUM_SERVER=ns1=http://192.168.1.2:5380,ns2=http://192.168.1.3:5380"
+      - "TECHNITIUM_LISTEN=:8080"
+      - "TECHNITIUM_LOG=INFO"
+      # - "TECHNITIUM_TOOLSETS=all"          # every tool; default core
+      # - "TECHNITIUM_ENABLE_WRITE=true"     # register the tools that change a server; without it every tool only reads
+      # - "TECHNITIUM_ENABLE_DELETE=true"    # and the tools that delete; needs TECHNITIUM_ENABLE_WRITE too

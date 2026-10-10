@@ -1,0 +1,37 @@
+# build with the vendored deps, then ship the static binary on alpine: small, but keeps a shell
+# so you can `docker exec -it technitium-mcp sh` to poke at things. runs as a non-root user.
+# make docker passes VERSION/COMMIT from git; a bare `docker build .` reports "dev".
+#
+# REGISTRY is where the two base images come from: Google's mirror of Docker Hub
+# (mirror.gcr.io/library), which holds the same images and does not turn a shared CI runner away
+# for having pulled too much. CI builds again from Docker Hub itself (docker.io/library) when the
+# mirror gives nothing. Nothing here needs a newer Dockerfile syntax than every builder has, so no
+# syntax image is named: that was a third thing to fetch before the build could start.
+ARG GO_VERSION=1.27
+ARG ALPINE_VERSION=3.24
+ARG REGISTRY=mirror.gcr.io/library
+
+FROM ${REGISTRY}/golang:${GO_VERSION}-alpine AS build
+ARG VERSION=dev
+ARG COMMIT=unknown
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -mod=vendor \
+      -ldflags "-s -w \
+        -X github.com/katbyte/go-kt/version.Version=${VERSION} \
+        -X github.com/katbyte/go-kt/version.GitCommit=${COMMIT}" \
+      -o /technitium-mcp .
+
+FROM ${REGISTRY}/alpine:${ALPINE_VERSION}
+RUN apk add --no-cache ca-certificates tzdata \
+    && adduser -D -H -u 65532 technitium
+COPY --from=build /technitium-mcp /usr/local/bin/technitium-mcp
+USER technitium
+# HTTP transport by default in the container; set TECHNITIUM_SERVER and TECHNITIUM_TOKEN at runtime,
+# TECHNITIUM_AUTH_TOKEN to protect the endpoint. the healthcheck assumes the default port.
+ENV TECHNITIUM_LISTEN=:8080
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
+  CMD wget -q --spider http://127.0.0.1:8080/healthz || exit 1
+ENTRYPOINT ["technitium-mcp"]
+CMD ["serve"]

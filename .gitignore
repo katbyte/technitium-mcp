@@ -1,0 +1,12 @@
+.claude/
+.DS_Store
+.idea/
+dist/
+/technitium-mcp
+.tools/bin/
+.tools/cache/
+.tools/venv/
+.env
+.technitium-mcp
+.testenv*.sh
+.coverage/
