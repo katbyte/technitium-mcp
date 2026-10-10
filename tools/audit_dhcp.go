@@ -29,7 +29,7 @@ func (a *audited) readDHCP(ctx context.Context, picked []*servers.Server) {
 	type read struct {
 		held      dhcpHeld
 		addresses []netip.Addr
-		known     bool
+		state     *technitium.Cluster
 	}
 	a.dhcp, a.addresses = map[string]*dhcpHeld{}, map[string][]netip.Addr{}
 	for _, answer := range ask(ctx, picked, func(ctx context.Context, srv *servers.Server) (read, error) {
@@ -38,9 +38,9 @@ func (a *audited) readDHCP(ctx context.Context, picked []*servers.Server) {
 			return read{}, err
 		}
 		out := read{held: held}
-		// a server says which addresses are its own where it says how it stands in a cluster, in one or not
+		// a server says which addresses are its own where it says how it stands in a cluster, in one or not, and there names the cluster's other nodes
 		if state, err := srv.Client.ClusterState(ctx); err == nil {
-			out.known = true
+			out.state = state
 			for _, text := range state.ServerIPAddresses {
 				if addr, ok := parseAddr(text); ok {
 					out.addresses = append(out.addresses, addr)
@@ -56,8 +56,9 @@ func (a *audited) readDHCP(ctx context.Context, picked []*servers.Server) {
 			a.dhcpFailed = append(a.dhcpFailed, serverFailure{Server: answer.Server.Name, Error: answer.Err.Error()})
 		default:
 			a.dhcp[answer.Server.Name] = &answer.Value.held
-			if answer.Value.known {
+			if answer.Value.state != nil {
 				a.addresses[answer.Server.Name] = answer.Value.addresses
+				a.knows(answer.Value.state)
 			}
 		}
 	}
@@ -199,12 +200,10 @@ func auditDHCP(a *audited) []finding {
 		}
 	}
 
-	// the addresses every server asked is known by: what a scope may tell machines to resolve through
-	var known []netip.Addr
+	// a scope may tell machines to resolve through any server asked, any configured, or any node of their cluster: an address is held a stranger only when every server read said which addresses are its own
 	everyKnown := true
 	for _, v := range a.views {
-		addrs, ok := a.addresses[v.server]
-		known, everyKnown = append(known, addrs...), everyKnown && ok && len(addrs) > 0
+		everyKnown = everyKnown && len(a.addresses[v.server]) > 0
 	}
 
 	for _, l := range leasing {
@@ -232,8 +231,20 @@ func auditDHCP(a *audited) []finding {
 				continue
 			}
 			told = append(told, addr)
-			if everyKnown && !slices.Contains(known, addr) {
+			if everyKnown && !a.knownAddress(addr) {
 				say(l.server, finding{Problem: "scope_dns_unknown", Zone: domain, Name: scope, Detail: fmt.Sprintf("scope %s on %s tells machines to resolve through %s, which is no address of a server asked: what they are told there is not what these servers hold", scope, l.server, addr), Fix: "give the scope the addresses of these servers as its name servers, unless the other is meant"})
+			}
+		}
+		// the same server twice, as this server and by its address, leaves machines one name server that looks like two; a scope on every interface says this server without an address, so any of the server's own counts
+		self := a.addresses[l.server]
+		if own, ok := ipv4(s.listed.InterfaceAddress); !d.UseThisDNSServer || (ok && !own.IsUnspecified()) {
+			self = nil
+		}
+		for i, addr := range told {
+			if slices.Contains(told[:i], addr) || slices.Contains(self, addr) {
+				say(l.server, finding{Problem: "scope_dns_same", Zone: domain, Name: scope, Detail: fmt.Sprintf("scope %s on %s tells machines to resolve through %s twice, as this server and by its address: they have one name server where they look to have two, and nothing to turn to when it is down", scope, l.server, addr), Fix: "put another server's address in place of the repeat, or take the repeat out"})
+
+				break
 			}
 		}
 		for _, o := range a.views {
@@ -261,6 +272,9 @@ func auditDHCP(a *audited) []finding {
 				continue
 			}
 			who := machine(res.HardwareAddress, res.HostName)
+			if key := macKey(res.HardwareAddress); key != "" && strings.Trim(key, "0") == "" {
+				say(l.server, finding{Problem: "reservation_no_mac", Zone: domain, Name: res.Address, Detail: fmt.Sprintf("scope %s on %s keeps %s for %s, whose hardware address is all zeros: no machine has that address, so none is ever given the reservation", scope, l.server, addr, who), Fix: "set the reservation again with the machine's hardware address (dhcp_scope_set), or remove it"})
+			}
 			if hasNetwork && !network.Contains(addr) {
 				say(l.server, finding{Problem: "reservation_outside", Zone: domain, Name: res.Address, Detail: fmt.Sprintf("scope %s on %s keeps %s for %s, which is outside its network %s: the machine could not use it", scope, l.server, addr, who, network), Fix: "remove the reservation, or set it to an address in " + network.String()})
 			}

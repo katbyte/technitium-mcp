@@ -33,6 +33,10 @@ type ResolveQuery struct {
 	Protocol string
 	// DNSSEC asks for validation
 	DNSSEC bool
+	// ClientSubnet is a network the question is asked as if from, 203.0.113.0/24
+	// say: what a name server that answers by where the asker is would tell
+	// a client there
+	ClientSubnet string
 }
 
 // Resolution is a name server's answer to a query, as the server that asked
@@ -226,6 +230,7 @@ func (c *Client) Resolve(ctx context.Context, q ResolveQuery) (*Resolution, erro
 	if q.DNSSEC {
 		params.Set("dnssec", yes)
 	}
+	set(params, map[string]string{"eDnsClientSubnet": q.ClientSubnet})
 
 	var out struct {
 		Result Resolution `json:"result"`
@@ -235,4 +240,45 @@ func (c *Client) Resolve(ctx context.Context, q ResolveQuery) (*Resolution, erro
 	}
 
 	return &out.Result, nil
+}
+
+// ImportResolved asks a question as Resolve does and writes the records of
+// the answer into a zone of the server's own: the closest primary or
+// forwarder zone it holds for the name, or a new primary zone made for it.
+// It is how a zone held elsewhere is copied in a record set at a time, and
+// it changes the server where Resolve only asks.
+func (c *Client) ImportResolved(ctx context.Context, q ResolveQuery) (*Resolution, error) {
+	if q.Name == "" {
+		return nil, errors.New("dnsClient/resolve: which name")
+	}
+	params := url.Values{"domain": {q.Name}, "server": {q.Via}, "type": {q.Type}, "import": {yes}}
+	if q.Via == "" {
+		params.Set("server", ResolveRecursively)
+	}
+	if q.Type == "" {
+		params.Set("type", "A")
+	}
+	set(params, map[string]string{"protocol": q.Protocol, "eDnsClientSubnet": q.ClientSubnet})
+	if q.DNSSEC {
+		params.Set("dnssec", yes)
+	}
+
+	var out struct {
+		Result Resolution `json:"result"`
+	}
+	if err := c.write(ctx, "dnsClient/resolve", params, &out); err != nil {
+		return nil, err
+	}
+
+	return &out.Result, nil
+}
+
+// HealthCheck asks the server to resolve a name for itself, which answers
+// whether it is running and can resolve at all; nothing of it is written to
+// the log of queries. "" asks for localhost, and no type for an A record.
+func (c *Client) HealthCheck(ctx context.Context, name, recordType string) error {
+	params := url.Values{}
+	set(params, map[string]string{"domain": name, "type": recordType})
+
+	return c.read(ctx, "dnsClient/healthCheck", params, nil)
 }

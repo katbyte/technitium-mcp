@@ -5,9 +5,11 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"net/url"
 	"slices"
 	"strings"
 
+	"github.com/katbyte/technitium-mcp/sdk/technitium"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -45,6 +47,51 @@ type audited struct {
 	// server that would say nothing is in setupFailed instead
 	setup       map[string]*setupRead
 	setupFailed []serverFailure
+
+	// more is what each server says of its cluster, its accounts, its
+	// signed zones, its queries and its apps, for the audits of those: a
+	// server that would say none of it is in moreFailed instead
+	more       map[string]*moreRead
+	moreFailed []serverFailure
+
+	// reached are the addresses the servers are configured at, read or not,
+	// and nodeNames and nodeAddresses every node of a cluster a server asked
+	// is in, by what that server says of it. A zone's NS record or a scope's
+	// name server naming one of these names a server, not a stranger, even
+	// when that server could not be read
+	reached       []netip.Addr
+	nodeNames     []string
+	nodeAddresses []netip.Addr
+}
+
+// knows notes the nodes of a cluster as one server says they are, so that a
+// node that could not be read itself is still known as a server.
+func (a *audited) knows(state *technitium.Cluster) {
+	if state == nil {
+		return
+	}
+	for _, n := range state.Nodes {
+		if name := cleanName(n.Name); name != "" && !slices.Contains(a.nodeNames, name) {
+			a.nodeNames = append(a.nodeNames, name)
+		}
+		for _, text := range n.IPAddresses {
+			if addr, ok := parseAddr(text); ok && !slices.Contains(a.nodeAddresses, addr) {
+				a.nodeAddresses = append(a.nodeAddresses, addr)
+			}
+		}
+	}
+}
+
+// knownAddress reports whether an address is one a server asked has, one
+// a server is configured at, or one of a node of their cluster.
+func (a *audited) knownAddress(addr netip.Addr) bool {
+	for _, addrs := range a.addresses {
+		if slices.Contains(addrs, addr) {
+			return true
+		}
+	}
+
+	return slices.Contains(a.reached, addr) || slices.Contains(a.nodeAddresses, addr)
 }
 
 // needs is what an audit reads beside the zones.
@@ -53,6 +100,10 @@ type needs struct {
 	// allowed names, setup each zone's options, and security the servers'
 	// settings, sessions and version as well
 	dhcp, blocking, setup, security bool
+	// cluster is how each server stands in a cluster, access its accounts
+	// and who may do what, dnssec the keys of its signed zones, queries
+	// what it was asked and how it answered, and apps what it runs
+	cluster, access, dnssec, queries, apps bool
 }
 
 // perServer runs a check on each server's own zones and gives each thing
@@ -184,9 +235,11 @@ var audits = []audit{
 			{"ranges_overlap", "two servers leasing the same addresses, which do not tell each other what they have given"},
 			{"pool_low", "a scope with a tenth or less of its addresses free"},
 			{"scope_domain_unknown", "a scope whose domain no server asked holds a zone for"},
-			{"scope_dns_unknown", "a scope telling machines to resolve through an address that is no server asked"},
+			{"scope_dns_unknown", "a scope telling machines to resolve through an address that is no server asked, none configured here and no node of their cluster"},
+			{"scope_dns_same", "a scope telling machines to resolve through one server twice, as this server and by its address"},
 			{"scope_dns_missing", "a scope whose name servers leave out a server asked"},
 			{"reservation_outside", "a reservation for an address outside its scope's network"},
+			{"reservation_no_mac", "a reservation for a hardware address of all zeros, which no machine has"},
 			{"reservation_shared", "one address reserved for more than one machine"},
 			{"reservation_leased_away", "a reserved address that another machine holds a lease on"},
 			{"reservation_no_record", "a reservation with no address record for its name, or with no name and no record naming its address"},
@@ -217,9 +270,11 @@ var audits = []audit{
 	},
 	{
 		name:        "audit_zones",
-		description: "Find where a zone's own records and options do not fit the servers that hold it, from each zone's NS and SOA records, its options, and what each server calls itself: a name server the zone names that is no server asked, a server holding the zone that none of its NS records names, an SOA naming a primary that is not the server holding it as one - each of which a renamed server leaves behind - and a primary that lets no copy transfer the zone or tells none when it changes.",
+		description: "Find where a zone's own records and options do not fit the servers that hold it, from each zone's NS and SOA records, its options, and what each server calls itself: a name server the zone names that is no server asked and no node of their cluster, a server holding the zone that none of its NS records names, an SOA naming a primary that is not the server holding it as one - each of which a renamed server leaves behind - and a primary that lets no copy transfer the zone or tells none when it changes; and reverse zones of the wrong shape, one address each or holding no PTR at all.",
 		problems: [][2]string{
-			{"ns_unknown", "an NS record at a zone's own name for a server that is none of those asked"},
+			{"ns_unknown", "an NS record at a zone's own name for a server that is none of those asked, and no node of their cluster"},
+			{"reverse_zone_per_address", "reverse zones of one address each under a /24 no zone holds, as the server makes for a scope smaller than a /24"},
+			{"reverse_zone_empty", "a reverse zone with no PTR record in it"},
 			{"ns_missing", "a server holding a zone, as its primary or as a copy, that none of the zone's NS records names"},
 			{"soa_primary", "an SOA record naming a primary other than the server that holds the zone as its primary"},
 			{"transfer_denied", "a primary that lets nobody transfer a zone another server asked holds a copy of"},
@@ -242,6 +297,78 @@ var audits = []audit{
 		},
 		needs: needs{setup: true, security: true},
 		run:   auditSecurity,
+	},
+	{
+		name:        "audit_cluster",
+		description: "Find where a cluster of servers is not whole, from what each node says of it: a node the others cannot reach, nodes that do not agree who the nodes are, a secondary that has stopped fetching the primary's configuration, nodes on different versions of the server, a cluster of one, a node of the cluster that is not configured here and so was read by no audit, and servers that are in no cluster while the others are in one. Servers that are all in no cluster have nothing to find.",
+		problems: [][2]string{
+			{"node_unreachable", "a node of the cluster that another node cannot reach"},
+			{"nodes_disagree", "nodes of one cluster that list different nodes: one was dropped and still thinks it is in"},
+			{"config_stale", "a secondary node that has not fetched the primary's configuration for more than twice as long as it is set to"},
+			{"versions_differ", "nodes of one cluster on different versions of the server"},
+			{"single_node", "a cluster with its primary and no other node"},
+			{"node_not_configured", "a node of the cluster that is not among the servers configured here, so no audit read it"},
+			{"outside_cluster", "a server in no cluster, while others asked are in one"},
+		},
+		needs: needs{cluster: true},
+		run:   auditCluster,
+	},
+	{
+		name:        "audit_access",
+		description: "Find accounts and permissions that leave a server easier to take than it need be, from every account, its groups, sessions and tokens, and what each section allows: an administrator who signs in with a password alone, an account nobody has ever used, a switched-off account whose tokens are still there, the admin account the server ships with left on beside another administrator, and a section that every account may change. Only an administrator's token can read these.",
+		problems: [][2]string{
+			{"admin_no_two_factor", "an account in the Administrators group with no second factor"},
+			{"account_never_used", "an account that is switched on, has never signed in and has no token"},
+			{"disabled_with_tokens", "an account that is switched off and still has API tokens, which work again when it is switched back on"},
+			{"everyone_may_change", "a section the Everyone group may modify or delete in"},
+			{"stock_admin", "the admin account the server ships with switched on beside another administrator"},
+		},
+		needs: needs{access: true},
+		run:   auditAccess,
+	},
+	{
+		name:        "audit_dnssec",
+		description: "Find what the keys of the signed zones are waiting for or leave weak, on the server each zone is signed on: a key signing key that is ready and waits for its DS record to be put at the parent zone, a key that was made and never put in the zone, a zone whose names anyone can list because it proves absence with NSEC, a zone signing key the server never replaces, a key of an algorithm that is no longer trusted, and signatures the server has let expire. A zone that is not signed has nothing to find.",
+		problems: [][2]string{
+			{"ds_wanted_at_parent", "a key signing key that is Ready: its DS record is to be given to the parent zone"},
+			{"key_not_published", "a key that was generated and never put in the zone"},
+			{"nsec_walkable", "a zone signed with NSEC, whose names anyone can list"},
+			{"key_never_replaced", "a zone signing key in use that the server is set never to replace"},
+			{"weak_algorithm", "a key of an algorithm with MD5 or SHA-1 in it"},
+			{"signature_expired", "a signed zone holding signatures past their expiration, which the server should have renewed"},
+		},
+		needs: needs{dnssec: true},
+		run:   auditDNSSEC,
+	},
+	{
+		name:        "audit_queries",
+		description: "Find what the servers' own account of the last day's queries says is wrong, from each one's check of itself, its statistics and its log of queries: a server that cannot resolve a name right now, a forwarder of its that does not answer, answers with a failure or is slow, a server with no log of queries to look anything up in, one answering too many queries with a failure, one client asking for most of everything, a busy client with no name, a name asked for far more often than its TTL allows by something that does not cache, and the names in the servers' own zones that clients keep asking for and that do not exist - a name something is set to use that was never made, was removed, or is misspelt.",
+		problems: [][2]string{
+			{"not_resolving", "a server that could not resolve a name for itself when asked"},
+			{"forwarder_unanswering", "a forwarder that gave the server no answer when asked for the root's name servers"},
+			{"forwarder_failing", "a forwarder that answered that with a failure or a refusal"},
+			{"forwarder_slow", "a forwarder that took half a second or more to answer"},
+			{"no_query_log", "a server with no app keeping a log of queries"},
+			{"failing", "a server that answered five or more in every hundred of the last day's queries with a server failure"},
+			{"one_client", "one client that asked sixty or more in every hundred of the last day's queries"},
+			{"name_not_found", "a name under a zone the servers hold that was asked for five or more times in the last day and does not exist"},
+			{"client_unnamed", "a client that asked a thousand or more queries in the last day and has no name"},
+			{"client_not_caching", "a name the servers hold asked for ten times more in the last day than its TTL lets a client that caches ask"},
+		},
+		needs: needs{queries: true},
+		run:   auditQueries,
+	},
+	{
+		name:        "audit_apps",
+		description: "Find where the DNS apps the servers run are not what they should be: an app behind the version its maker's store has, an app one server runs and another does not, and an app the servers run at different versions or configured differently, so that they do not answer alike. A server that cannot ask the store is not said to be behind it.",
+		problems: [][2]string{
+			{"app_update", "an installed app the store has a newer version of"},
+			{"app_only_on", "an app installed on some of the servers asked and not on others"},
+			{"app_versions_differ", "an app that is not at one version on every server"},
+			{"app_config_differs", "an app that is not configured alike on every server"},
+		},
+		needs: needs{apps: true},
+		run:   auditApps,
 	},
 }
 
@@ -282,6 +409,14 @@ func (r *registry) audited(ctx context.Context, server string, need needs) (*aud
 	for _, name := range inv.asked {
 		a.views = append(a.views, viewOf(inv, name))
 	}
+	// the address each server is configured at, when it is one: a server that could not be read is still a server
+	for _, srv := range picked {
+		if u, err := url.Parse(srv.Client.BaseURL()); err == nil {
+			if addr, ok := parseAddr(u.Hostname()); ok {
+				a.reached = append(a.reached, addr)
+			}
+		}
+	}
 	if need.dhcp {
 		a.readDHCP(ctx, picked)
 	}
@@ -290,6 +425,9 @@ func (r *registry) audited(ctx context.Context, server string, need needs) (*aud
 	}
 	if need.setup {
 		a.readSetup(ctx, picked, need.security)
+	}
+	if need.cluster || need.access || need.dnssec || need.queries || need.apps {
+		a.readMore(ctx, picked, need)
 	}
 
 	return a, nil
@@ -311,6 +449,9 @@ func (a *audited) unread() string {
 	for _, v := range a.views {
 		if setup := a.setup[v.server]; setup != nil && len(setup.unread) > 0 {
 			said = note(said, fmt.Sprintf("%s would not give %s: nothing was found there because nothing was looked at", v.server, strings.Join(setup.unread, ", ")))
+		}
+		if more := a.more[v.server]; more != nil && len(more.unread) > 0 {
+			said = note(said, fmt.Sprintf("%s would not give %s: nothing was found there because nothing was looked at", v.server, strings.Join(more.unread, ", ")))
 		}
 	}
 
@@ -395,7 +536,7 @@ func registerAudits(r *registry) {
 		Name:        "audit_all",
 		Description: "Run every audit over the configured servers in one reading of their zones, their DHCP, their blocking and their settings, and answer with how much each found, by kind: where to look first. The audits, each of which gives its findings when called itself: " + strings.Join(names, ", ") + ".",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in auditAllIn) (*mcp.CallToolResult, auditAllOut, error) {
-		a, err := r.audited(ctx, in.Server, needs{dhcp: true, blocking: true, setup: true, security: true})
+		a, err := r.audited(ctx, in.Server, needs{dhcp: true, blocking: true, setup: true, security: true, cluster: true, access: true, dnssec: true, queries: true, apps: true})
 		if err != nil {
 			return nil, auditAllOut{}, err
 		}

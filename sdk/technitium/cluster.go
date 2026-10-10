@@ -28,6 +28,14 @@ type Cluster struct {
 	ServerDomain string `json:"dnsServerDomain"`
 	Version      string `json:"version"`
 	Nodes        []Node `json:"clusterNodes"`
+	// how often the nodes look at each other and how often a secondary
+	// fetches the primary's configuration, each with how soon it tries again
+	// after failing, in seconds; and when this node last fetched it, in UTC
+	HeartbeatRefreshIntervalSeconds int    `json:"heartbeatRefreshIntervalSeconds"`
+	HeartbeatRetryIntervalSeconds   int    `json:"heartbeatRetryIntervalSeconds"`
+	ConfigRefreshIntervalSeconds    int    `json:"configRefreshIntervalSeconds"`
+	ConfigRetryIntervalSeconds      int    `json:"configRetryIntervalSeconds"`
+	ConfigLastSynced                string `json:"configLastSynced"`
 	// ServerIPAddresses are the addresses the server that was asked has
 	ServerIPAddresses []string `json:"serverIpAddresses"`
 }
@@ -119,8 +127,9 @@ type ClusterJoin struct {
 	// for itself, which is what it has unless it was given a real one
 	IgnoreCertificateErrors bool
 	// Username and Password are an administrator's on the primary: joining
-	// is asked of it as that account, and an API token will not do
-	Username, Password string
+	// is asked of it as that account, and an API token will not do. TOTP is
+	// its one-time code, when it has a second factor
+	Username, Password, TOTP string
 }
 
 // JoinCluster makes the server a secondary node of the cluster whose primary
@@ -132,9 +141,7 @@ func (c *Client) JoinCluster(ctx context.Context, join ClusterJoin) (*Cluster, e
 		return nil, errors.New("admin/cluster/initJoin: joining needs this server's address, the primary's url, and an administrator's name and password on the primary")
 	}
 	params := url.Values{"secondaryNodeIpAddresses": {strings.Join(join.Addresses, ",")}, "primaryNodeUrl": {join.PrimaryURL}, "primaryNodeUsername": {join.Username}, "primaryNodePassword": {join.Password}}
-	if join.PrimaryAddress != "" {
-		params.Set("primaryNodeIpAddress", join.PrimaryAddress)
-	}
+	set(params, map[string]string{"primaryNodeIpAddress": join.PrimaryAddress, "primaryNodeTotp": join.TOTP})
 	if join.IgnoreCertificateErrors {
 		params.Set("ignoreCertificateErrors", yes)
 	}

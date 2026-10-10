@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"slices"
 	"strings"
 
@@ -46,7 +47,7 @@ func (r *resolveRow) same(o *resolveRow) bool {
 
 // resolveRowOf puts one question to one name server through one configured
 // server.
-func resolveRowOf(ctx context.Context, srv *servers.Server, asked, name, recordType string, dnssec bool) resolveRow {
+func resolveRowOf(ctx context.Context, srv *servers.Server, asked, name, recordType, subnet string, dnssec bool) resolveRow {
 	row := resolveRow{Server: srv.Name, Asked: asked}
 	via := asked
 	switch asked {
@@ -57,7 +58,7 @@ func resolveRowOf(ctx context.Context, srv *servers.Server, asked, name, recordT
 	default:
 	}
 
-	res, err := srv.Client.Resolve(ctx, technitium.ResolveQuery{Via: via, Name: name, Type: recordType, DNSSEC: dnssec})
+	res, err := srv.Client.Resolve(ctx, technitium.ResolveQuery{Via: via, Name: name, Type: recordType, DNSSEC: dnssec, ClientSubnet: subnet})
 	if err != nil {
 		row.Error = err.Error()
 
@@ -98,10 +99,11 @@ func registerResolveTools(r *registry) {
 	type resolveIn struct {
 		serverArg
 
-		Name      string   `json:"name"                jsonschema:"the domain name to resolve; for the name an address has, give the address"`
-		Type      string   `json:"type,omitempty"      jsonschema:"the record type to ask for: A (the default), AAAA, CNAME, MX, TXT, PTR, NS, SOA, SRV, ANY, ...; PTR is asked when name is an address"`
-		Resolvers []string `json:"resolvers,omitempty" jsonschema:"other name servers to put the same question to, from each server, for comparison with its own answer: the address of a public resolver such as 1.1.1.1 or 8.8.8.8 to see what the outside world is told, or recursive to have the server resolve from the root past its own zones, cache, forwarders and block lists"`
-		DNSSEC    bool     `json:"dnssec,omitempty"    jsonschema:"ask for DNSSEC validation"`
+		Name         string   `json:"name"                    jsonschema:"the domain name to resolve; for the name an address has, give the address"`
+		Type         string   `json:"type,omitempty"          jsonschema:"the record type to ask for: A (the default), AAAA, CNAME, MX, TXT, PTR, NS, SOA, SRV, ANY, ...; PTR is asked when name is an address"`
+		Resolvers    []string `json:"resolvers,omitempty"     jsonschema:"other name servers to put the same question to, from each server, for comparison with its own answer: the address of a public resolver such as 1.1.1.1 or 8.8.8.8 to see what the outside world is told, or recursive to have the server resolve from the root past its own zones, cache, forwarders and block lists"`
+		DNSSEC       bool     `json:"dnssec,omitempty"        jsonschema:"ask for DNSSEC validation"`
+		ClientSubnet string   `json:"client_subnet,omitempty" jsonschema:"ask as if from this network, as 203.0.113.0/24: what a name server that answers by where the asker is would tell a client there"`
 	}
 	type resolveOut struct {
 		Name    string       `json:"name"`
@@ -129,6 +131,10 @@ func registerResolveTools(r *registry) {
 		if recordType == "" {
 			recordType = "A"
 		}
+		subnet := strings.TrimSpace(in.ClientSubnet)
+		if _, err := netip.ParsePrefix(subnet); subnet != "" && err != nil {
+			return nil, resolveOut{}, fmt.Errorf("client_subnet %q is no network: give its address and the bits of its mask, as 203.0.113.0/24", in.ClientSubnet)
+		}
 		picked, err := r.servers.Pick(in.Server)
 		if err != nil {
 			return nil, resolveOut{}, err
@@ -145,7 +151,7 @@ func registerResolveTools(r *registry) {
 		answers := ask(ctx, picked, func(ctx context.Context, srv *servers.Server) ([]resolveRow, error) {
 			rows := make([]resolveRow, 0, len(asked))
 			for _, who := range asked {
-				rows = append(rows, resolveRowOf(ctx, srv, who, name, recordType, in.DNSSEC))
+				rows = append(rows, resolveRowOf(ctx, srv, who, name, recordType, subnet, in.DNSSEC))
 			}
 
 			return rows, nil

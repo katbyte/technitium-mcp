@@ -12,6 +12,7 @@ package technitiumtest
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -32,6 +33,12 @@ type Request struct {
 	// Path is the call's path under /api/: zones/list
 	Path   string
 	Params url.Values
+	// File is the file the call was sent, nil for a call sent none, and
+	// FileName the name it was sent under
+	File     []byte
+	FileName string
+	// Token is the bearer token the call carried, "" for none
+	Token string
 }
 
 // Server is a canned Technitium server.
@@ -46,6 +53,28 @@ type Server struct {
 	answers map[string]string
 	then    map[string]func(Request)
 	seen    []Request
+	tokens  []string
+}
+
+// postOnly are the parameters that hold something secret, which a client
+// must never put in an address.
+var postOnly = []string{"pass", "newPass", "totp", "primaryNodePassword", "primaryNodeTotp", "pemKskPrivateKey", "pemZskPrivateKey", "pemPrivateKey", "clientSecret", "sharedSecret"}
+
+// Accept has the canned server take another token beside its own: the one a
+// test's sign-in or new token answers with, which the calls after it carry.
+func (s *Server) Accept(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.tokens = append(s.tokens, token)
+}
+
+// accepts reports whether a token is one a test told the server to take.
+func (s *Server) accepts(token string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return slices.Contains(s.tokens, token)
 }
 
 // vendored reads the API document once for every canned server in a test
@@ -169,21 +198,22 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params, problem := s.read(r)
+	asked, problem := s.read(r, path)
 	if problem != "" {
 		s.tb.Errorf("%s %s: %s", r.Method, path, problem)
 	}
+	params := asked.Params
 	s.check(r, path, params)
 
 	s.mu.Lock()
 	do := s.then[path]
 	s.mu.Unlock()
 	if do != nil {
-		do(Request{Method: r.Method, Path: path, Params: params})
+		do(asked)
 	}
 
 	s.mu.Lock()
-	s.seen = append(s.seen, Request{Method: r.Method, Path: path, Params: params})
+	s.seen = append(s.seen, asked)
 	body, answered := s.answers[path]
 	// an answer for what this call was sent comes before the path's own;
 	// when two parameters each have one, the first by name does, so a test
@@ -220,37 +250,107 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 // read takes a request's parameters from where its method carries them: a
-// GET's from the address, a POST's from a form in the body.
-func (*Server) read(r *http.Request) (params url.Values, problem string) {
-	switch r.Method {
-	case http.MethodGet:
-		return r.URL.Query(), ""
-	case http.MethodPost:
+// GET's from the address, a POST's from a form in the body - but for a call
+// sent a file, whose body is the file and whose parameters are in the
+// address.
+func (s *Server) read(r *http.Request, path string) (asked Request, problem string) {
+	asked = Request{Method: r.Method, Path: path}
+	asked.Token, _ = strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	ct := r.Header.Get("Content-Type")
+
+	switch {
+	case r.Method == http.MethodGet:
+		asked.Params = r.URL.Query()
+	case r.Method != http.MethodPost:
+		problem = "the API is asked with GET or POST"
+	case strings.HasPrefix(ct, "multipart/form-data"):
+		if call := s.doc.Call(path); call != nil && !call.Upload {
+			problem = "it was sent a file, and the API document does not say the call takes one"
+		}
+		asked.Params = r.URL.Query()
+		upload, header, err := r.FormFile("file")
+		if err != nil {
+			return asked, "the file it was sent cannot be read: " + err.Error()
+		}
+		defer func() { _ = upload.Close() }()
+		asked.FileName = header.Filename
+		if asked.File, err = io.ReadAll(upload); err != nil {
+			return asked, "the file it was sent cannot be read: " + err.Error()
+		}
+	default:
 		if r.URL.RawQuery != "" {
 			problem = "a POST carries its parameters in the body, and this one has some in the address"
 		}
-		if ct := r.Header.Get("Content-Type"); ct != "application/x-www-form-urlencoded" {
+		if ct != "application/x-www-form-urlencoded" {
 			problem = fmt.Sprintf("a POST's parameters are a form, and its Content-Type is %q", ct)
 		}
 		if err := r.ParseForm(); err != nil {
-			return nil, "its form cannot be read: " + err.Error()
+			return asked, "its form cannot be read: " + err.Error()
 		}
+		asked.Params = r.PostForm
+	}
 
-		return r.PostForm, problem
-	default:
-		return nil, "the API is asked with GET or POST"
+	return asked, problem
+}
+
+// sent is every parameter every canned server of the test binary was sent,
+// by the call it was sent to: what a run of a package's tests exercised,
+// which is how a parameter the API document gives a call and no test ever
+// sends is found (see Sent).
+var sent = struct {
+	sync.Mutex
+
+	params map[string]map[string]bool
+}{params: map[string]map[string]bool{}}
+
+func noteSent(path string, params url.Values) {
+	sent.Lock()
+	defer sent.Unlock()
+
+	if sent.params[path] == nil {
+		sent.params[path] = map[string]bool{}
+	}
+	for name := range params {
+		sent.params[path][name] = true
 	}
 }
+
+// Sent reports whether any canned server of this test binary has been sent
+// a parameter with a call, so far.
+func Sent(path, param string) bool {
+	sent.Lock()
+	defer sent.Unlock()
+
+	return sent.params[path][param]
+}
+
+// tokenless are the calls that take a name and a password in place of a
+// token, and so are sent none.
+var tokenless = []string{"user/login", "user/createToken"}
 
 // check holds a request against the API document and the rules a client
 // keeps.
 func (s *Server) check(r *http.Request, path string, params url.Values) {
-	if got := r.Header.Get("Authorization"); got != "Bearer "+Token {
+	switch got := r.Header.Get("Authorization"); {
+	case got == "Bearer "+Token:
+	case got == "" && slices.Contains(tokenless, path) && params.Has("user"):
+		// signing in is the one thing done with no token
+	case strings.HasPrefix(got, "Bearer ") && s.accepts(strings.TrimPrefix(got, "Bearer ")):
+	default:
 		s.tb.Errorf("%s: the token is sent as a bearer header, and Authorization was %q", path, got)
+	}
+	if r.Method == http.MethodGet {
+		for name := range params {
+			if slices.Contains(postOnly, name) {
+				s.tb.Errorf("%s: %s was sent in the address of a GET, which puts it in logs: what is secret goes in the body of a POST", path, name)
+			}
+		}
 	}
 	if params.Has("token") {
 		s.tb.Errorf("%s: the token was sent as a parameter, which puts it in addresses and logs", path)
 	}
+
+	noteSent(path, params)
 
 	call := s.doc.Call(path)
 	if call == nil {

@@ -294,3 +294,56 @@ func TestTheClientsTrafficIsLoggedWithoutItsSecrets(t *testing.T) {
 		}
 	}
 }
+
+// The secrets the API takes under names of its own are hidden too: a new
+// password, a one-time code, a second factor's secret and its picture, a
+// private key, and the transfer keys as the settings are sent them.
+func TestTheClientsOtherSecretsAreNotLogged(t *testing.T) {
+	t.Parallel()
+
+	fake := technitiumtest.New(t)
+	fake.Accept(sessionToken)
+	fake.AnswerWhole("user/login", `{"username":"admin","token":"`+sessionToken+`","status":"ok"}`)
+	fake.AnswerWhole("user/changePassword", `{"status":"ok"}`)
+	fake.Answer("user/2fa/init", `{"totpEnabled":false,"qrCodePngImage":"5ecre7-picture","secret":"5ecre7-totp"}`)
+	fake.Answer("admin/sessions/createToken", `{"username":"admin","tokenName":"automation","token":"5ecre7-token"}`)
+	fake.Answer("settings/set", `{"version":"15.6","tsigKeys":[]}`)
+	fake.Answer("zones/dnssec/sign", `{}`)
+	log := &traced{}
+	c, err := technitium.New(fake.URL, technitiumtest.Token, technitium.WithLog(log))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session, _, err := c.Login(t.Context(), "admin", "5ecre7-pass", "5ecre7-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.ChangePassword(t.Context(), "5ecre7-pass", "5ecre7-new", "5ecre7-code", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.InitTwoFactor(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.CreateTokenAs(t.Context(), "admin", "automation"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SetSettings(t.Context(), map[string]string{"tsigKeys": "home|5ecre7-tsig|hmac-sha256", "proxyPassword": "5ecre7-proxy"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SignZone(t.Context(), "example.com", technitium.Signing{Algorithm: technitium.AlgorithmECDSA, Curve: "P256", PEMKSKPrivateKey: "5ecre7-ksk", PEMZSKPrivateKey: "5ecre7-zsk"}); err != nil {
+		t.Fatal(err)
+	}
+
+	said := log.said.String()
+	for _, secret := range []string{technitiumtest.Token, sessionToken, "5ecre7"} {
+		if strings.Contains(said, secret) {
+			t.Errorf("%q is in what the client logged:\n%s", secret, said)
+		}
+	}
+	for _, shown := range []string{"/api/user/login", "/api/user/changePassword", "/api/settings/set", "zone=example.com", "tokenName=automation"} {
+		if !strings.Contains(said, shown) {
+			t.Errorf("%q is not in what the client logged, and is no secret:\n%s", shown, said)
+		}
+	}
+}

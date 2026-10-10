@@ -188,7 +188,9 @@ test-acceptance: ## Run the tool tests against already-running servers (TECHNITI
 # starts two servers and goes straight to the cluster.
 TOPOLOGIES?=single pair cluster
 
-# live SUITE [EXTRA GO TEST ARGS] - start the servers each arrangement needs, run the suite on each, tear them down
+# live SUITE [EXTRA GO TEST ARGS] - start the servers each arrangement needs, run the suite on each, tear them down.
+# A cluster's own calls end with there being no cluster, so the tests of them (named ...TakenApart) are skipped by
+# every run and then run alone, last, on the cluster the last arrangement made.
 define live
 	@set -e; \
 		env=".testenv-$(1).sh"; \
@@ -211,7 +213,11 @@ define live
 			started=$$topology; \
 			. ./"$$env"; \
 			TECHNITIUM_TEST_TOPOLOGY=$$topology go test -tags integration -count=1 ./$(1)/... -timeout ${TEST_TIMEOUT} -v $(2); \
-		done
+		done; \
+		if [ "$$started" = "cluster" ]; then \
+			echo "==> $(1): the cluster taken apart..."; \
+			TECHNITIUM_TEST_TOPOLOGY=cluster TECHNITIUM_TEST_APART=1 go test -tags integration -count=1 ./$(1)/... -timeout ${TEST_TIMEOUT} -v -run 'TakenApart$$' $(2); \
+		fi
 endef
 
 testacc-integration: ## SDK tests against throwaway servers: one, then two, then the two as a cluster

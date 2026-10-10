@@ -216,7 +216,7 @@ func TestRecordSetRefusals(t *testing.T) {
 		"a PTR for a name":             {map[string]any{"server": "dock", "name": "x.example.com", "type": "TXT", "value": "hello", "ptr": true}, "ptr is for an A or an AAAA record"},
 		"an address of the wrong kind": {map[string]any{"server": "dock", "name": "x.example.com", "type": "A", "value": "fd00::4"}, "is not an address an A record holds"},
 		"a value that is not one":      {map[string]any{"server": "dock", "name": "x.example.com", "type": "MX", "value": "mail.example.com"}, "a MX record's value is preference exchange"},
-		"a type it cannot write":       {map[string]any{"server": "dock", "name": "x.example.com", "type": "SOA", "value": "a b 1 2 3 4 5"}, "cannot write record type SOA"},
+		"a type it cannot write":       {map[string]any{"server": "dock", "name": "x.example.com", "type": "SOA", "value": "a b 1 2 3 4 5"}, "a SOA record is not added, changed or deleted as other records are"},
 		"no name":                      {map[string]any{"server": "dock", "name": "", "type": "A", "value": "10.0.0.1"}, "a record needs a name, a type and a value"},
 	} {
 		if msg := suite.CallErr(t, "record_set", tc.args); !strings.Contains(msg, tc.want) {
@@ -368,5 +368,47 @@ func TestRecordDelete(t *testing.T) {
 	// a delete tool is not there without --enable-delete, writes or no
 	if msg := p.session(t, Options{EnableWrite: true}).CallErr(t, "record_delete", map[string]any{"server": "dock", "name": "two.example.com", "type": "A", "all": true}); !strings.Contains(msg, "record_delete") {
 		t.Errorf("record_delete with deletes not enabled = %q", msg)
+	}
+}
+
+// A record set with ptr and a TTL brings the PTR that names it to the same
+// TTL, and leaves alone one that has it already or when no TTL was asked for.
+func TestRecordSetAlignsThePTRsTTL(t *testing.T) {
+	t.Parallel()
+
+	p := writePair(t)
+	at(p.dock, "emby.example.com", embyA)
+	at(p.dock, "4.0.0.10.in-addr.arpa", embyPTR)
+	p.dock.Then("zones/records/update", func(req technitiumtest.Request) {
+		if req.Params.Get("type") == "A" {
+			at(p.dock, "emby.example.com", strings.Replace(embyA, `"ttl":300`, `"ttl":600`, 1))
+		} else {
+			at(p.dock, "4.0.0.10.in-addr.arpa", strings.Replace(embyPTR, `"ttl":300`, `"ttl":600`, 1))
+		}
+	})
+	suite := p.session(t, everything)
+
+	dry := suite.Call(t, "record_set", map[string]any{"server": "dock", "name": "emby.example.com", "type": "A", "value": "10.0.0.4", "ttl": 600, "ptr": true, "dry_run": true})
+	if got := acctest.Strs(t, dry["changes"], "changes"); !slices.Contains(got, "would have changed the TTL of the PTR at 4.0.0.10.in-addr.arpa from 300 to 600 seconds") || len(writes(p.dock)) != 0 {
+		t.Errorf("a dry run = %v, sent %v", got, writes(p.dock))
+	}
+
+	out := suite.Call(t, "record_set", map[string]any{"server": "dock", "name": "emby.example.com", "type": "A", "value": "10.0.0.4", "ttl": 600, "ptr": true})
+	if got := acctest.Strs(t, out["changes"], "changes"); len(got) != 2 || got[1] != "changed the TTL of the PTR at 4.0.0.10.in-addr.arpa from 300 to 600 seconds" {
+		t.Errorf("changes = %v", got)
+	}
+	if ptr := p.dock.Last("zones/records/update"); ptr.Params.Get("type") != "PTR" || ptr.Params.Get("domain") != "4.0.0.10.in-addr.arpa" || ptr.Params.Get("zone") != "0.0.10.in-addr.arpa" || ptr.Params.Get("ttl") != "600" || ptr.Params.Get("ptrName") != "emby.example.com" {
+		t.Errorf("the PTR was changed with %v", ptr.Params)
+	}
+
+	// both at the TTL asked for, or no TTL asked for: nothing more is sent
+	sent := len(writes(p.dock))
+	for _, args := range []map[string]any{
+		{"server": "dock", "name": "emby.example.com", "type": "A", "value": "10.0.0.4", "ttl": 600, "ptr": true},
+		{"server": "dock", "name": "emby.example.com", "type": "A", "value": "10.0.0.4", "ptr": true},
+	} {
+		if same := suite.Call(t, "record_set", args); len(acctest.Strs(t, same["changes"], "changes")) != 0 || len(writes(p.dock)) != sent {
+			t.Errorf("record_set %v = %v, sent %v", args, same["changes"], writes(p.dock)[sent:])
+		}
 	}
 }

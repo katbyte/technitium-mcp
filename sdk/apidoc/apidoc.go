@@ -6,9 +6,11 @@
 //
 // The document is regular enough to read: every call is a "###" section
 // holding a "URL:" line with an example address, an optional "OBSOLETE PATH:"
-// list, and a "WHERE:" list of parameters before its "RESPONSE:". A section
-// that does not read that way is an error, never a call quietly left out: a
-// document whose layout changed must not pass for one fully covered.
+// list, and a "WHERE:" list of parameters before its "RESPONSE:". A call that
+// is sent a body says so under "REQUEST:", where a form's fields are shown as
+// they are posted. A section that does not read that way is an error, never
+// a call quietly left out: a document whose layout changed must not pass for
+// one fully covered.
 package apidoc
 
 import (
@@ -34,8 +36,11 @@ type Call struct {
 	// current client must not use
 	Obsolete []string
 	// Params are the names of the parameters the call takes: those its
-	// WHERE list gives, and those its example address carries
+	// WHERE list gives, those its example address carries, and the fields of
+	// a form its REQUEST shows
 	Params []string
+	// Upload is the call taking a file, posted as a form's
+	Upload bool
 }
 
 // Takes reports whether the call is documented as taking a parameter.
@@ -158,7 +163,16 @@ var (
 	obsoletePath = regexp.MustCompile("^`/api/([^`]+)`")
 	// a parameter in a WHERE list; the document closes one name's backticks a space late
 	paramLine = regexp.MustCompile("^- `([A-Za-z0-9_]+) ?`")
+	// a form's field as a REQUEST shows one posted: config=...
+	formField = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9_]*)=\S`)
 )
+
+// sendsFile reports whether a line of a REQUEST says the call takes a file.
+func sendsFile(line string) bool {
+	line = strings.ToLower(line)
+
+	return strings.Contains(line, "multi-part") || strings.Contains(line, "multipart")
+}
 
 // Parse reads the calls out of the document's text.
 func Parse(text string) (*Doc, error) {
@@ -190,6 +204,11 @@ func Parse(text string) (*Doc, error) {
 			continue
 		}
 		if fenced {
+			// what a REQUEST shows posted is a form's fields, each a parameter
+			if m := formField.FindStringSubmatch(line); m != nil && cur != nil && section == "request" {
+				addParam(cur, m[1])
+			}
+
 			continue
 		}
 
@@ -220,6 +239,11 @@ func Parse(text string) (*Doc, error) {
 			section = "where"
 		case marker == "RESPONSE:" || strings.HasPrefix(marker, "RESPONSE HEADERS:"):
 			section, answered = "", true
+		case strings.HasPrefix(marker, "REQUEST:") && !answered:
+			section = "request"
+			cur.Upload = cur.Upload || sendsFile(line)
+		case section == "request":
+			cur.Upload = cur.Upload || sendsFile(line)
 		case section == "url":
 			if m := exampleURL.FindStringSubmatch(line); m != nil {
 				cur.Path = m[1]
@@ -273,7 +297,8 @@ func Parse(text string) (*Doc, error) {
 
 // addParam adds a parameter to a call once.
 func addParam(c *Call, name string) {
-	if !slices.Contains(c.Params, name) {
+	// an example address with a slip in it, &=pageNumber=1, gives a parameter with no name
+	if name != "" && !slices.Contains(c.Params, name) {
 		c.Params = append(c.Params, name)
 	}
 }

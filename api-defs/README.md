@@ -9,17 +9,20 @@ Technitium publishes no machine-readable description of its HTTP API: no OpenAPI
 | File | Source | Version vendored |
 |---|---|---|
 | `technitium-apidocs-15.6.0.md` | <https://github.com/TechnitiumSoftware/DnsServer/blob/v15.6.0/APIDOCS.md>, at the release tag | Technitium DNS Server 15.6.0 - 139 calls |
-| `unwrapped.txt` | kept by hand | the calls in the document that `sdk/technitium` has no method for yet |
+| `unwrapped.txt` | kept by hand | the calls in the document that `sdk/technitium` has no method for: none |
+| `unsent.txt` | kept by hand | the parameters in the document that no test of the client sends, each with why: five names the server no longer reads |
 
 The file is named for the server version it describes. The highest version here is the one read, and `technitium.APIVersion` says which the client was written against; `server_info` reports it beside each server's own.
 
 ## How the client is held against it
 
-`sdk/apidoc` reads the document: every call's path, the paths it went by in older versions, and the parameters it takes. A section it cannot read is an error, never a call quietly left out, so a document whose layout changed cannot pass for one fully covered. Three checks use it, all in `make test`:
+`sdk/apidoc` reads the document: every call's path, the paths it went by in older versions, and the parameters it takes. A section it cannot read is an error, never a call quietly left out, so a document whose layout changed cannot pass for one fully covered. Four checks use it, all in `make test`:
 
 - **Every path the client calls is in the document, at its current spelling.** The paths are read out of the client's source, where each is written out as a string, so the list is exact. A typo, an obsolete path, or a call a new version renamed fails.
 - **Every call in the document is wrapped or listed in `unwrapped.txt`.** A call a new document adds fails until it is wrapped or listed on purpose; a listed call that has since been wrapped, or that the document dropped, fails too, so the list cannot rot.
 - **Every parameter the client sends is one the document gives that call.** The canned server every unit test runs against (`sdk/technitium/technitiumtest`) checks each request it gets, and every client method must have a test, so a misspelled or dropped parameter fails where it is sent.
+
+- **Every parameter the document gives a call is sent by some test of the client, or is listed in `unsent.txt` with why.** The canned servers note what they are sent, and a whole run of the client's tests ends by holding that against the document. Wrapping a call is not covering it: before this check the client wrapped all 139 calls and could not send a third of what they take, among it whole record types and most of a DHCP scope's options. A parameter a new document adds to a call fails here until the client sends it.
 
 `make apicheck` prints how much of the API is wrapped, by area.
 
@@ -29,7 +32,7 @@ The document is a description, not the server. The integration suite (`integrati
 
 1. Download `APIDOCS.md` at the new release's tag and save it here as `technitium-apidocs-<version>.md`; delete the old one, which git keeps.
 2. Run `make test`. New calls fail until wrapped or added to `unwrapped.txt`; renamed or removed calls the client uses fail by name.
-3. Diff the two documents for parameters added to calls the client already wraps.
+3. Parameters added to calls the client already wraps fail the same run by name: give the client a way to send each, with a test, or list it in `unsent.txt` with why.
 4. Set `technitium.APIVersion`, and run `make testacc` against the new server image.
 
 ## What the server does
@@ -138,6 +141,7 @@ Found by having real machines ask a 15.6 server for leases - a DHCP client run o
 - **A scope deleted takes its leases and their records, and leaves the records of its reservations behind.** `audit_dhcp` finds them by their comment.
 - **Hardware addresses are taken with colons or dashes, in either case, and given back as `00-11-22-AA-BB-CC`.** One that is none is refused with "The input string ... was not in a correct format."
 - **Deleting a scope that is not there answers ok.**
+- **A scope with a network smaller than a /24 gets a reverse zone per address.** Seen on a real 15.5 server, not reproduced in the suites: a /27 scope with `dnsUpdates` on had left eight zones of the shape `162.16.16.172.in-addr.arpa`, one PTR or none in each, where nothing held `16.16.172.in-addr.arpa`. `audit_zones` finds the shape.
 
 ### In a cluster
 
@@ -155,6 +159,99 @@ Found by making a cluster of two 15.6 servers through the API, which the live su
 - **A cluster makes itself a TSIG key**, named for its catalog zone, which every node then has in its settings.
 - **`clusterNodes` gives each node's `ipAddresses`, a list**, where the document's example for the state call shows `ipAddress`.
 
+### Records of every type
+
+Kept by `TestEveryRecordType` in the integration suite, which adds, changes and deletes one of each.
+
+- **A record's data is read under other names than it is sent under**, for most of the newer types. An SSHFP is read as `algorithm`, `fingerprintType` and `fingerprint` and sent as `sshfpAlgorithm`, `sshfpFingerprintType` and `sshfpFingerprint`; a TLSA, a NAPTR and a URI likewise, each parameter with its type before it; a forwarder's `priority` is sent as `forwarderPriority`; an APP record's `data` is sent as `recordData`. The client keeps one table of both names for every type.
+- **An NS record's glue is given beside its data**, as `glueRecords` on the record, and taken as `glue`.
+- **A change to a record resets what it does not send.** A forwarder record changed without its priority, its DNSSEC validation or its proxy goes back to none of them; an NS record changed without its glue loses it. So a change sends every option the record has.
+- **A proxy's password is never given back**, so a forwarder record that goes through a proxy with one has to be given it again whenever it is changed.
+- **A forwarder record has no TTL**: the server keeps it at 0 whatever it is sent.
+- **A forwarder record goes only in a forwarder zone**: a primary refuses one with "The record type is not supported by primary zones."
+- **A TXT record split into strings is read back with its text joined**, the line ends gone, beside `characterStrings` and `characterStringsBase64`. Its text alone no longer says where the strings part, so the client names such a record by its strings in base64 when it changes or deletes it.
+- **An SVCB or HTTPS record's parameters are read as an object and sent as a list with bars** between every key and value, `false` for none; a target that is the root is sent as a dot and read back as nothing.
+- **A DS record is read with the numbers of its algorithm and digest type beside their names**, and takes the names.
+- **A type the server has no layout for is taken by its name**, as LOC or NULL, with its data as bytes in hex with colons between (`rdata`), and read back under `value`. A type given as a number is not taken: 65280 is answered with "Parameter 'aname' missing."
+- **An APP record is taken whatever the app's name and class are**: the server does not check that the app is installed or has such a part.
+
+### Zones of every type
+
+Kept by `TestZonesWhole` and `TestForwardersAndImports`.
+
+- **A secondary zone is not made unless its primary answers**: the server asks the primary as it makes the zone, and refuses with "Connection refused" or the like. A copy cannot be made ahead of its primary.
+- **A copy told to transfer over TLS or QUIC is given its primary's addresses back with the port for it**, `10.0.0.2:853` for an address set as `10.0.0.2`.
+- **A zone made with `useSoaSerialDateScheme` has a serial of the day and a count**, 2026101001, and the SOA carries `useSerialDateScheme`. A change to the SOA that does not send it switches it off, so the client always sends it.
+- **A forwarder zone is made with one FWD record at its own name** unless `initializeForwarder` is false, which makes it empty.
+- **A zone's keys are named, not held**: a transfer key or an update policy takes the name of any key, and the options give the keys the server has (`availableTsigKeyNames`) when asked to.
+- **`zones/enable` and `zones/disable` need the right to modify a zone**, where `zones/options/set`, which also takes `disabled`, needs the right to delete it.
+- **A question put with `import` writes the answer's records over the ones of that type at the name**, in the closest primary or forwarder zone the server holds for it; it makes a primary zone named for the name when it holds none. The comments of the records written over are lost.
+
+### Asking through another name server
+
+Kept by `TestAuditFindsAForwarderThatIsNotThere` in the acceptance suite.
+
+- **A question for the root's name servers (`.`, NS) is taken**, and any resolver that is up answers it in a few tens of milliseconds.
+- **A name server that is not there is given up on after about twenty seconds**, with "request timed out for name server".
+
+### Walking a list
+
+Kept by `TestWalksAndCounts`.
+
+- **`blocked/list`, `allowed/list` and `cache/list` answer for another name than the one asked** when nothing is at it and one name is under it: the first name below that holds something or branches, or with `direction=up` the nearest above. A name that holds something, or branches, or that the list knows nothing of, is answered for itself either way.
+- **They give names whole under `zones`**, not labels, and a listed name carries records of its own.
+
+### Accounts, tokens and permissions
+
+Kept by `TestAccountLife`, `TestGroups`, `TestPermissions` and `TestSSO`.
+
+- **`user/createSingleUseToken` puts the token under `response`**, where the other calls that make a token put it beside `status`.
+- **Switching an account off keeps its API tokens.** They are refused while it is off and work again when it is switched back on.
+- **`zones/list` gives only the zones the account may view**, with no word that others exist. A new account is in Everyone, which may view the Zones and Logs sections and nothing in Settings.
+- **The permission lists are set whole**: a section's or a zone's users and groups each go as one table, and whoever is left out is taken off.
+- **The single sign-on calls for one user answer "Cluster is not initialized" outside a cluster**: they are for a cluster's nodes to keep each other's users in step. The group map is a list of a remote group and a local one, and an empty one clears it.
+
+### DNSSEC
+
+Kept by `TestDNSSEC`.
+
+- **An unsigned zone's DNSSEC properties are read without error**: status Unsigned, and no keys.
+- **A new key signing key stays Published for hours**, until the zone's DNSKEY TTL has passed, before it is Ready for its DS record.
+- **The DNSKEY TTL is changed only while every key is Ready or Active**, and a key is retired only once another of its kind is Active ("no successor key").
+- **A rollover leaves the old key in the zone, retiring**: the server takes it out when that is safe.
+
+### Logs, statistics and apps
+
+Kept by `TestLogFiles`, `TestQueryLogExport`, `TestMetricsAndStatsDeleted` and `TestAppsInstalledAndRemoved`.
+
+- **Deleting a log file that is not there, and uninstalling an app that is not installed, give no error.**
+- **The export of the log of queries is CSV that starts with a byte order mark**, with the headings `RowNumber,Timestamp,ClientIpAddress,Protocol,ResponseType,ResponseRtt,RCODE,Domain,Type,Class,Answer`.
+- **The Prometheus metrics are named `queries_total` and the like**, where the document's example has `total_queries`.
+- **An app that fails to install leaves a folder behind.** A file that is no zip is refused, but its folder stays under the server's apps, is not listed, and is not cleared by uninstalling; a server with one cannot have another join it as a cluster ("Central Directory corrupt"). Installing a real app under the same name and uninstalling it clears it. The client refuses a file that is no zip before it is sent.
+
+### Settings and backups
+
+Kept by `TestAllSettings` and `TestBackupAndRestore`.
+
+- **The transfer keys are one setting, set whole and with their secrets**: adding one key means sending them all. A cluster refuses to lose the key of its own catalog ("Cannot remove TSIG key").
+- **`settings/set` takes names it never gives back**: the certificate passwords and the proxy's parts, which `settings/get` gives under one `proxy` object.
+- **A setting a later version brought is passed over without a word**: sent to a server that does not have it, `settings/set` answers ok and changes nothing. 15.5 has no `enableCachePrefetch`, which 15.6 brought. Apart from the names above, every setting a server has is in what `settings/get` gives, so one missing from it is one the server lacks: the client makes that an error once the server has answered, and `settings_set` refuses it before anything is sent.
+- **A backup is of what the server has written to disk**, which lags a change to a zone or a list by a few seconds.
+- **A restore on a cluster's primary reaches the other nodes when they next fetch the configuration**, not at once.
+
+### In a cluster, the rest
+
+Kept by `TestOnNode` and `TestClusterTakenApart`.
+
+- **A secondary asked to fetch the whole configuration again answers at once and fetches afterwards**, which takes it a second or a few. A call that needs the same part of it, a notify say, waits behind the fetch; its log says "Server configuration was synced from the Primary node successfully" when it is done, which is the only place that does.
+- **A secondary told of new times for the cluster can stop answering cluster calls, and why is not known.** With a secondary in the cluster, setting the cluster's times on the primary (`admin/cluster/primary/setOptions`) was followed some seconds later by the secondary logging that it was told of the change and never that it fetched it; from then on a notify, a resync, `updatePrimary` and the primary's request that it leave all waited on it without end, while every other call it has went on answering, and a node cut off so is left half in the cluster. It was seen on two 15.6 servers eight times, by hand with `curl` among them, so it is not the client's doing; most surely on servers that had been through the suite's earlier stages, and once on a cluster made fresh. It is not every time: the tool suite sets the same times with a secondary in the cluster on every run and has not met it. `TestClusterTakenApart` therefore sets the times while the primary is the only node, and checks them on a node that joins afterwards.
+- **The server sends nothing of an answer until a call is done**, so a client that gives up on an answer that has not begun gives up on slow calls. The client waits two minutes.
+- **`node` is ignored by a server in no cluster**: the call is answered by the server asked.
+- **The calls the nodes make of each other are taken from an administrator too**: the transfer of the configuration answers with the whole of it as a zip, some megabytes, and a secondary admitted with a certificate that is none is refused with "ASN1 corrupted data".
+- **A secondary that has just joined gives no time it last fetched the configuration** until it has fetched once.
+- **A secondary that has just joined is refused promotion for a few seconds**, with "the Cluster Secondary zone does not exist" or "could not resolve DANE TLSA record for host", until it has transferred the cluster's own zone, where the primary's certificate record is.
+- **Of the 139 calls, 69 are passed on with `node`**, and the list of zones, the settings and everything of DHCP are not among them: a node reached only through another could answer only part of what is asked of a server.
+
 ## What the document gets wrong
 
 The reader allows for these, and its tests keep them:
@@ -164,3 +261,5 @@ The reader allows for these, and its tests keep them:
 - One example address is not on `localhost` (Initialize And Join Cluster).
 - A call's `WHERE:` list sometimes misses a parameter its example address carries (`value` for Delete Record), so both are read.
 - One parameter's name is closed a space late (`primaryZoneTransferProtocol ` for Set Zone Options), which used to end the list there.
+- One example address has a parameter with no name (`&=pageNumber=1` for Query Logs), which the reader passes over.
+- Five names in example addresses are ones the server no longer reads and no call's list gives: `allowRecursion`, `allowRecursionOnlyForPrivateNetworks`, `preferIPv6` and `useNxDomainForBlocking` for Set DNS Settings, and `zoneTransferNameServers` for Set Zone Options. They are the whole of `unsent.txt`.

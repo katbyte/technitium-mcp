@@ -1,0 +1,10 @@
+# The parameters in the vendored document that no test of sdk/technitium sends, each as the path of its call and its name, sorted.
+# TestMain (sdk/technitium) keeps the list exact: a parameter the document gives a call must be sent by some test of the client or be here with its reason, and one that is here and is sent, or that the document does not have, fails the run.
+# token is sent as a header and never as a parameter, and node is added by OnNode to the calls the API passes on: neither is counted.
+#
+# names the server no longer reads, left behind in the document's example addresses and listed nowhere among a call's parameters
+settings/set allowRecursion
+settings/set allowRecursionOnlyForPrivateNetworks
+settings/set preferIPv6
+settings/set useNxDomainForBlocking
+zones/options/set zoneTransferNameServers

@@ -18,3 +18,9 @@ var Docs embed.FS
 //
 //go:embed unwrapped.txt
 var Unwrapped string
+
+// Unsent is every parameter in the document that no test of sdk/technitium
+// sends, each as its call's path and its name on a line, with why.
+//
+//go:embed unsent.txt
+var Unsent string

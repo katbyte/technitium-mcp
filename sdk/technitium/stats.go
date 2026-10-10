@@ -32,6 +32,15 @@ const (
 type StatsWindow struct {
 	Type       string
 	Start, End time.Time
+
+	// EveryQueryType has Stats give each record type asked for its own
+	// count, where the server otherwise gives the leading ones and the rest
+	// as one
+	EveryQueryType bool
+	// NoReverseLookup has TopStats give clients by address alone, without
+	// the server looking up a name for each, and OnlyRateLimited only the
+	// clients it is holding back for asking too much
+	NoReverseLookup, OnlyRateLimited bool
 }
 
 // params are the window as the API takes one.
@@ -149,6 +158,9 @@ func (c *Client) Stats(ctx context.Context, window StatsWindow) (*Stats, error) 
 		return nil, errors.New("dashboard/stats/get: " + err.Error())
 	}
 	params.Set("utc", yes)
+	if window.EveryQueryType {
+		params.Set("dontTrimQueryTypeData", yes)
+	}
 
 	var out Stats
 	if err := c.read(ctx, "dashboard/stats/get", params, &out); err != nil {
@@ -171,6 +183,11 @@ func (c *Client) TopStats(ctx context.Context, window StatsWindow, list string, 
 	params.Set("statsType", list)
 	if limit > 0 {
 		params.Set("limit", strconv.Itoa(limit))
+	}
+	for param, on := range map[string]bool{"noReverseLookup": window.NoReverseLookup, "onlyRateLimitedClients": window.OnlyRateLimited} {
+		if on {
+			params.Set(param, yes)
+		}
 	}
 
 	var out Stats

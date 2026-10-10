@@ -550,7 +550,18 @@ func numbered(a, b string) bool {
 		}, s)
 	}
 
-	return strip(a) == strip(b)
+	if strip(a) == strip(b) {
+		return true
+	}
+
+	// pimox5a and pimox5b: one run of hosts, lettered after a number
+	ra, rb := []rune(a), []rune(b)
+	if len(ra) != len(rb) || len(ra) < 2 {
+		return false
+	}
+	last := len(ra) - 1
+
+	return string(ra[:last]) == string(rb[:last]) && unicode.IsDigit(ra[last-1]) && unicode.IsLetter(ra[last]) && unicode.IsLetter(rb[last])
 }
 
 // auditNaming finds names and values that are probably slips.

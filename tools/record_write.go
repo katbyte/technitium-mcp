@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/netip"
 	"slices"
 	"strings"
@@ -94,7 +95,7 @@ func sameValue(a, b string) bool {
 
 // rowOf is a record as a tool gives one.
 func rowOf(rec *technitium.Record) recordRow {
-	return recordRow{Name: rec.Name, Type: rec.Type, TTL: rec.TTL, Value: rec.Value(), Comment: rec.Comments, Disabled: rec.Disabled, Expiry: rec.ExpiryTTL}
+	return recordRow{Name: rec.Name, Type: rec.Type, TTL: rec.TTL, Value: rec.Value(), Comment: rec.Comments, Disabled: rec.Disabled, Expiry: rec.ExpiryTTL, Options: optionsOf(rec)}
 }
 
 // rowsAt are the records of a type among a name's, as a tool gives them.
@@ -161,9 +162,23 @@ func (c *changes) did(format string, args ...any) bool {
 }
 
 // setPTR makes the PTR for an address name a host, adding it or changing the
-// one that names another.
+// one that names another. One that names the host already is brought to the
+// TTL the address record has: the two are one host's, and a TTL changed on
+// one and left on the other is half a change.
 func setPTR(ctx context.Context, srv *servers.Server, plan ptrPlan, host string, ttl int, done *changes) error {
-	if slices.ContainsFunc(plan.held, func(rec technitium.Record) bool { return sameValue(rec.Target(), host) }) {
+	if i := slices.IndexFunc(plan.held, func(rec technitium.Record) bool { return sameValue(rec.Target(), host) }); i >= 0 {
+		old := &plan.held[i]
+		if ttl <= 0 || old.TTL == ttl {
+			return nil
+		}
+		want := technitium.UpdateOf(old)
+		want.TTL = ttl
+		if done.did("changed the TTL of the PTR at %s from %d to %d seconds", plan.name, old.TTL, ttl) {
+			if _, err := srv.Client.UpdateRecord(ctx, plan.zone, old, want); err != nil {
+				return fmt.Errorf("changing the TTL of the PTR at %s: %w", plan.name, err)
+			}
+		}
+
 		return nil
 	}
 	if len(plan.held) > 0 {
@@ -253,17 +268,18 @@ func registerRecordWriteTools(r *registry) {
 	type recordSetIn struct {
 		writeServerArg
 
-		Name     string  `json:"name"               jsonschema:"the record's full domain name"`
-		Type     string  `json:"type"               jsonschema:"the record's type: A, AAAA, CNAME, MX, TXT, PTR, NS, SRV, CAA, ANAME or DNAME"`
-		Value    string  `json:"value"              jsonschema:"the record's value as zone_records gives one: an address for an A, a name for a CNAME, the preference and the exchange for an MX (10 mail.example.com), the whole text for a TXT"`
-		Zone     string  `json:"zone,omitempty"     jsonschema:"the zone the record goes in; left out, the closest zone the server holds for the name"`
-		TTL      int     `json:"ttl,omitempty"      jsonschema:"seconds; left out, a record that is there keeps its own and a new one takes the server's default"`
-		Comment  *string `json:"comment,omitempty"  jsonschema:"the record's comment; left out, a record that is there keeps its own; an empty one clears it"`
-		Disabled *bool   `json:"disabled,omitempty" jsonschema:"true disables the record, so the server stops answering with it, and false enables it; left out keeps it as it is"`
-		Replaces string  `json:"replaces,omitempty" jsonschema:"the value of the record of this type at the name to change into this one, keeping its TTL and comment: 10.0.0.4 to move a name from that address to value's"`
-		Only     bool    `json:"only,omitempty"     jsonschema:"make this the only record of its type at the name: every other is removed. Without it a record is added beside the ones there, as two A records at one name are"`
-		PTR      bool    `json:"ptr,omitempty"      jsonschema:"for an A or an AAAA: also make the PTR record for the address name this name, in the reverse zone the server holds for it, and with replaces remove the old address's"`
-		DryRun   bool    `json:"dry_run,omitempty"  jsonschema:"change nothing, and answer with what would be done"`
+		Name     string            `json:"name"               jsonschema:"the record's full domain name"`
+		Type     string            `json:"type"               jsonschema:"the record's type: A, AAAA, CNAME, MX, TXT, PTR, NS, SRV, CAA, DNAME, DS, SSHFP, TLSA, SVCB, HTTPS, URI, NAPTR, RP, and the server's own ANAME, FWD and APP. Any other type but the ones a server makes for itself (SOA, DNSKEY, RRSIG, NSEC) is taken as bytes"`
+		Value    string            `json:"value"              jsonschema:"the record's value as zone_records gives one, its fields in the order a zone file writes them: an address for an A; a name for a CNAME; 10 mail.example.com for an MX; the whole text for a TXT; 1 . alpn=h2,h3 for an HTTPS (priority, target, then parameters as key=value); Udp 9.9.9.9 for a FWD (protocol, then the name server, or this-server); the app's name and then the class of its part for an APP; and for a type the server has no layout for, its bytes in hex as 01:02:03"`
+		Options  map[string]string `json:"options,omitempty"  jsonschema:"what a record of some types has beside its value, by the API's names: glue for an NS (its name server's addresses, with commas); splitText for a TXT (true splits the text into strings at its line ends); forwarderPriority, dnssecValidation, proxyType (NoProxy, DefaultProxy, Http, Socks5), proxyAddress, proxyPort, proxyUsername and proxyPassword for a FWD; recordData for an APP, which is what the app is told, JSON for most; autoIpv4Hint and autoIpv6Hint for an SVCB or HTTPS. One left out keeps what the record has"`
+		Zone     string            `json:"zone,omitempty"     jsonschema:"the zone the record goes in; left out, the closest zone the server holds for the name"`
+		TTL      int               `json:"ttl,omitempty"      jsonschema:"seconds; left out, a record that is there keeps its own and a new one takes the server's default"`
+		Comment  *string           `json:"comment,omitempty"  jsonschema:"the record's comment; left out, a record that is there keeps its own; an empty one clears it"`
+		Disabled *bool             `json:"disabled,omitempty" jsonschema:"true disables the record, so the server stops answering with it, and false enables it; left out keeps it as it is"`
+		Replaces string            `json:"replaces,omitempty" jsonschema:"the value of the record of this type at the name to change into this one, keeping its TTL and comment: 10.0.0.4 to move a name from that address to value's"`
+		Only     bool              `json:"only,omitempty"     jsonschema:"make this the only record of its type at the name: every other is removed. Without it a record is added beside the ones there, as two A records at one name are"`
+		PTR      bool              `json:"ptr,omitempty"      jsonschema:"for an A or an AAAA: also make the PTR record for the address name this name, in the reverse zone the server holds for it, and with replaces remove the old address's"`
+		DryRun   bool              `json:"dry_run,omitempty"  jsonschema:"change nothing, and answer with what would be done"`
 	}
 	type recordSetOut struct {
 		Server  string      `json:"server"`
@@ -276,7 +292,7 @@ func registerRecordWriteTools(r *registry) {
 	}
 	add(r, writeTool, &mcp.Tool{
 		Name:        "record_set",
-		Description: "Make a record be there with the value given, on one server: added when the name has none like it, changed in place when replaces names the one to change or when only its TTL, comment or state differ, and left alone when it is already so. A record changed keeps its TTL and comment unless new ones are given. Records of one type at a name share one TTL: a record added beside others takes theirs unless given one, a TTL given is set on them all, and their comments, which the server drops when that happens, are put back. only makes it the single record of its type at the name; ptr sets the address's PTR as well. A CNAME is refused beside other records at its name, and anything else beside a CNAME. dry_run answers with what would be done and changes nothing; otherwise the answer is the records before and after, read back. A zone the server holds as a copy is refused, saying where to make the change.",
+		Description: "Make a record be there with the value given, on one server: added when the name has none like it, changed in place when replaces names the one to change or when only its TTL, comment or state differ, and left alone when it is already so. A record changed keeps its TTL and comment unless new ones are given. Records of one type at a name share one TTL: a record added beside others takes theirs unless given one, a TTL given is set on them all, and their comments, which the server drops when that happens, are put back. only makes it the single record of its type at the name; ptr sets the address's PTR as well. Every record type the server has is written: beside the common ones, HTTPS and SVCB, TLSA, SSHFP, DS, NAPTR, URI and RP, the server's own FWD (a name sent on to another name server) and APP (a name answered by an installed app), and any other type as bytes. What some types have beside their value goes in options, and a record changed keeps the options it has. A CNAME is refused beside other records at its name, and anything else beside a CNAME. dry_run answers with what would be done and changes nothing; otherwise the answer is the records before and after, read back. A zone the server holds as a copy is refused, saying where to make the change.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in recordSetIn) (*mcp.CallToolResult, recordSetOut, error) {
 		name, recordType := cleanName(in.Name), strings.ToUpper(strings.TrimSpace(in.Type))
 		if name == "" || recordType == "" {
@@ -294,6 +310,16 @@ func registerRecordWriteTools(r *registry) {
 			return nil, recordSetOut{}, fmt.Errorf("ptr is for an A or an AAAA record: a %s has no address to name", recordType)
 		}
 		value := (&technitium.Record{Type: recordType, Data: data}).Value()
+		// a forwarder record has no TTL: the server keeps it at 0 whatever it is sent, and a change of it would never be seen to hold
+		if recordType == "FWD" && in.TTL != 0 {
+			return nil, recordSetOut{}, errors.New("a FWD record has no TTL: it is not an answer anyone keeps, and the server holds it at 0. Leave ttl out")
+		}
+		options := slices.Sorted(maps.Keys(in.Options))
+		for _, option := range options {
+			if err := technitium.SetOption(data, recordType, option, strings.TrimSpace(in.Options[option])); err != nil {
+				return nil, recordSetOut{}, err
+			}
+		}
 
 		where, err := r.placeFor(ctx, in.Server, in.Zone, name)
 		if err != nil {
@@ -376,8 +402,9 @@ func registerRecordWriteTools(r *registry) {
 			if current == nil {
 				current = replaced
 			}
+			// what the record has beside its value it keeps unless given anew: the server resets what a change leaves out
 			want := technitium.UpdateOf(current)
-			want.Data = data
+			maps.Copy(want.Data, data)
 			if in.TTL > 0 {
 				want.TTL = in.TTL
 			}
@@ -404,6 +431,17 @@ func registerRecordWriteTools(r *registry) {
 			}
 			if want.Disabled != current.Disabled {
 				what = append(what, map[bool]string{true: "it to disabled", false: "it to enabled"}[want.Disabled])
+			}
+			had := current.Options()
+			for _, option := range options {
+				switch given := strings.TrimSpace(in.Options[option]); {
+				case option == "proxyPassword":
+					// never read back, so never known to be the same, and never said
+					what = append(what, "its proxyPassword")
+				case given != had[option]:
+					what = append(what, fmt.Sprintf("its %s from %q to %q", option, had[option], given))
+				default:
+				}
 			}
 			if len(what) > 0 && done.did("changed the %s record at %s: %s", recordType, name, strings.Join(what, ", ")) {
 				if _, err := srv.Client.UpdateRecord(ctx, where.zone, current, want); err != nil {

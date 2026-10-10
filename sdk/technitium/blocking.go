@@ -132,3 +132,102 @@ func (c *Client) PauseBlocking(ctx context.Context, minutes int) (string, error)
 func (c *Client) UpdateBlockLists(ctx context.Context) error {
 	return c.write(ctx, "settings/forceUpdateBlockLists", nil, nil)
 }
+
+// Listed is one place in the tree of names one of the server's two lists
+// is kept as.
+type Listed struct {
+	// Domain is the name the place is at. Asked for a name that only leads
+	// on to one other, the server answers for the first name below it where
+	// the tree branches or a listed name is, and says so here
+	Domain string `json:"domain"`
+	// Zones are the names below it that are listed or lead to a listed
+	// name, each written whole
+	Zones []string `json:"zones"`
+	// Records are what the server answers with at the name when it is on
+	// the list itself: an SOA and an NS of the server's own making
+	Records []Record `json:"records"`
+}
+
+// BlockedUnder reads the server's own list of blocked names as a tree: the
+// names under a name that are blocked or lead to blocked names, and whether
+// the name is blocked itself. "" is the root.
+func (c *Client) BlockedUnder(ctx context.Context, name string) (*Listed, error) {
+	params := url.Values{}
+	set(params, map[string]string{"domain": name})
+
+	var out Listed
+	if err := c.read(ctx, "blocked/list", params, &out); err != nil {
+		return nil, err
+	}
+
+	return &out, nil
+}
+
+// BlockedAbove is BlockedUnder walking the other way. It differs for a name
+// that only leads on: nothing is listed at it and one name is under it.
+// BlockedUnder answers for the first name below such a one that is listed
+// or branches, and this for the nearest above. A name that is listed, or
+// branches, or that the list knows nothing of, is answered for itself
+// either way.
+func (c *Client) BlockedAbove(ctx context.Context, name string) (*Listed, error) {
+	var out Listed
+	if err := c.read(ctx, "blocked/list", url.Values{"domain": {name}, "direction": {"up"}}, &out); err != nil {
+		return nil, err
+	}
+
+	return &out, nil
+}
+
+// AllowedAbove is BlockedAbove for the server's list of allowed names.
+func (c *Client) AllowedAbove(ctx context.Context, name string) (*Listed, error) {
+	var out Listed
+	if err := c.read(ctx, "allowed/list", url.Values{"domain": {name}, "direction": {"up"}}, &out); err != nil {
+		return nil, err
+	}
+
+	return &out, nil
+}
+
+// AllowedUnder is BlockedUnder for the server's list of allowed names.
+func (c *Client) AllowedUnder(ctx context.Context, name string) (*Listed, error) {
+	params := url.Values{}
+	set(params, map[string]string{"domain": name})
+
+	var out Listed
+	if err := c.read(ctx, "allowed/list", params, &out); err != nil {
+		return nil, err
+	}
+
+	return &out, nil
+}
+
+// ImportBlocked adds many names to the server's own list of blocked names
+// in one call. Names already on it are no error.
+func (c *Client) ImportBlocked(ctx context.Context, names []string) error {
+	if len(names) == 0 {
+		return errors.New("blocked/import: which names")
+	}
+
+	return c.write(ctx, "blocked/import", url.Values{"blockedZones": {strings.Join(names, ",")}}, nil)
+}
+
+// ImportAllowed adds many names to the server's list of allowed names in
+// one call.
+func (c *Client) ImportAllowed(ctx context.Context, names []string) error {
+	if len(names) == 0 {
+		return errors.New("allowed/import: which names")
+	}
+
+	return c.write(ctx, "allowed/import", url.Values{"allowedZones": {strings.Join(names, ",")}}, nil)
+}
+
+// FlushBlocked empties the server's own list of blocked names. The block
+// lists it fetches are not touched.
+func (c *Client) FlushBlocked(ctx context.Context) error {
+	return c.write(ctx, "blocked/flush", nil, nil)
+}
+
+// FlushAllowed empties the server's list of allowed names.
+func (c *Client) FlushAllowed(ctx context.Context) error {
+	return c.write(ctx, "allowed/flush", nil, nil)
+}

@@ -119,7 +119,7 @@ func TestBlockListsSet(t *testing.T) {
 	}
 	// one taken off; and the whole set replaced, an empty one clearing it
 	p.dock.Then("settings/set", func(technitiumtest.Request) { fetches(more) })
-	if off := suite.Call(t, "block_lists_set", map[string]any{"server": "dock", "remove": []string{had}}); !slices.Equal(acctest.Strs(t, off["changes"], "changes"), []string{"took the list " + had + " off those dock fetches"}) || p.dock.Last("settings/set").Params.Get("blockListUrls") != more {
+	if off := suite.Call(t, "block_lists_set", map[string]any{"server": "dock", "remove": []string{had}}); !slices.Equal(acctest.Strs(t, off["changes"], "changes"), []string{"removed the list " + had + " from those dock fetches"}) || p.dock.Last("settings/set").Params.Get("blockListUrls") != more {
 		t.Errorf("one taken off = %v", off)
 	}
 	p.dock.Then("settings/set", func(technitiumtest.Request) {

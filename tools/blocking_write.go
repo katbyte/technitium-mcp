@@ -201,7 +201,7 @@ func registerBlockingWriteTools(r *registry) {
 		}
 		for _, list := range have {
 			if !slices.Contains(want, list) {
-				done.did("took the list %s off those %s fetches", list, srv.Name)
+				done.did("removed the list %s from those %s fetches", list, srv.Name)
 			}
 		}
 		if len(done.said) > 0 && !in.DryRun {

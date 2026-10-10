@@ -68,7 +68,7 @@ const (
 // leases, and the records made by hand that the DHCP audit is there to find.
 func makeDHCP(ctx context.Context, first *technitium.Client) error {
 	dnsServers := []string{world.Address(world.First), strangerDNS}
-	if err := first.SetScope(ctx, technitium.NewScope{Name: dhcpScope, StartingAddress: pool.First.String(), EndingAddress: pool.Last.String(), SubnetMask: pool.Mask, DomainName: dhcpZone, DNSUpdates: new(true), RouterAddress: pool.Subnet.Addr().Next().String(), DNSServers: dnsServers, LeaseTimeDays: 1, Exclusions: [][2]string{{pool.At(atExcluded), pool.At(atLast)}}}); err != nil {
+	if err := first.SetScope(ctx, &technitium.NewScope{Name: dhcpScope, StartingAddress: pool.First.String(), EndingAddress: pool.Last.String(), SubnetMask: pool.Mask, DomainName: dhcpZone, DNSUpdates: new(true), RouterAddress: pool.Subnet.Addr().Next().String(), DNSServers: dnsServers, LeaseTimeDays: 1, Exclusions: [][2]string{{pool.At(atExcluded), pool.At(atLast)}}}); err != nil {
 		return fmt.Errorf("%s: making the scope: %w", world.First, err)
 	}
 	byHand := func(name, address, comment string) error {
@@ -414,6 +414,27 @@ func TestDHCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// the lease made a reservation where it stands, found by the machine's name, and made ordinary again: a dry run changes nothing, and asked again there is nothing to do
+	dry = suite.Call(t, "dhcp_lease_reserve", on(map[string]any{"machine": "temp", "dry_run": true}))
+	if got := acctest.Strs(t, dry["changes"], "changes"); len(got) != 1 || !strings.HasPrefix(got[0], "would have made the lease of "+temp.Address+" to "+macTemp) || dry["type"] != "Dynamic" || reserved(macTemp) != nil {
+		t.Errorf("a dry run of reserving a lease = %v", dry)
+	}
+	kept := suite.Call(t, "dhcp_lease_reserve", on(map[string]any{"machine": "temp"}))
+	if r := reserved(macTemp); kept["type"] != "Reserved" || kept["address"] != temp.Address || kept["machine"] != macTemp || kept["scope"] != dhcpScope || r == nil || r.Address != temp.Address {
+		t.Errorf("the lease reserved = %v, and the reservation %+v", kept, r)
+	}
+	if again := suite.Call(t, "dhcp_lease_reserve", on(map[string]any{"machine": temp.Address})); acctest.BoolOf(again["changed"]) || len(acctest.Strs(t, again["changes"], "changes")) != 0 {
+		t.Errorf("reserved twice = %v", again)
+	}
+	freed := suite.Call(t, "dhcp_lease_reserve", on(map[string]any{"machine": strings.ToLower(macTemp), "scope": dhcpScope, "reserved": false}))
+	if freed["type"] != "Dynamic" || reserved(macTemp) != nil || !strings.Contains(acctest.Strs(t, freed["changes"], "changes")[0], "removing the reservation") {
+		t.Errorf("the lease made ordinary again = %v, and the reservation %+v", freed, reserved(macTemp))
+	}
+	if msg := suite.CallErr(t, "dhcp_lease_reserve", on(map[string]any{"machine": "02-42-AC-CC-00-99"})); !strings.Contains(msg, "has given no lease to 02-42-AC-CC-00-99") {
+		t.Errorf("a machine that holds no lease = %q", msg)
+	}
+
 	forgot = suite.Call(t, "dhcp_lease_delete", on(map[string]any{"hardware_address": macTemp}))
 	if got := acctest.Strs(t, forgot["changes"], "changes"); len(got) != 3 || got[1] != "removed A "+temp.Address+" at temp."+dhcpZone+", which the server took away with the lease" || forgot["reservation"] != nil || forgot["records"] != nil {
 		t.Errorf("forgetting a dynamic lease = %v", forgot)
@@ -487,5 +508,18 @@ func TestDHCP(t *testing.T) {
 	off := suite.Call(t, "dhcp_scope_set", on(map[string]any{"scope": guestScope, "enabled": false}))
 	if _, enabled := scopeOn(first); enabled || acctest.BoolOf(acctest.Object(t, off["after"], "after")["enabled"]) {
 		t.Errorf("switched off = %v", off)
+	}
+
+	// and deleted: a dry run says what would go and leaves it; then it is gone, and a scope that is not there is said to be
+	dry = suite.Call(t, "dhcp_scope_delete", on(map[string]any{"scope": guestScope, "dry_run": true}))
+	if there, _ := scopeOn(first); !there || !slices.Equal(acctest.Strs(t, dry["changes"], "changes"), []string{"would have deleted the scope " + guestScope + " on " + world.First + " with its 0 reservations and 0 leases"}) {
+		t.Errorf("a dry run of deleting a scope = %v", dry)
+	}
+	deleted := suite.Call(t, "dhcp_scope_delete", on(map[string]any{"scope": guestScope}))
+	if there, _ := scopeOn(first); there || !acctest.BoolOf(deleted["changed"]) || deleted["note"] != nil {
+		t.Errorf("the scope deleted = %v", deleted)
+	}
+	if msg := suite.CallErr(t, "dhcp_scope_delete", on(map[string]any{"scope": guestScope})); !strings.Contains(msg, "has no scope named "+guestScope) {
+		t.Errorf("a scope that is not there, deleted = %q", msg)
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -91,6 +93,36 @@ func (c *Client) Zones(ctx context.Context, filter ZoneFilter) ([]Zone, error) {
 	return out.Zones, nil
 }
 
+// ZonePage is one page of the zones a server holds, with how many there are
+// in all.
+type ZonePage struct {
+	PageNumber int    `json:"pageNumber"`
+	TotalPages int    `json:"totalPages"`
+	TotalZones int    `json:"totalZones"`
+	Zones      []Zone `json:"zones"`
+}
+
+// ZonesPage lists the zones a page at a time, for a server with more than
+// are wanted in one answer: page counts from 1, and perPage 0 is the
+// server's ten. Zones gives them all at once.
+func (c *Client) ZonesPage(ctx context.Context, filter ZoneFilter, page, perPage int) (*ZonePage, error) {
+	if page < 1 {
+		return nil, errors.New("zones/list: which page: they count from 1")
+	}
+	params := url.Values{"pageNumber": {strconv.Itoa(page)}}
+	set(params, map[string]string{"filterName": filter.Name, "filterType": filter.Type})
+	if perPage > 0 {
+		params.Set("zonesPerPage", strconv.Itoa(perPage))
+	}
+
+	var out ZonePage
+	if err := c.read(ctx, "zones/list", params, &out); err != nil {
+		return nil, err
+	}
+
+	return &out, nil
+}
+
 // NewZone is a zone to create.
 type NewZone struct {
 	// Name is the zone's domain name; an IP address or a network in CIDR
@@ -109,6 +141,49 @@ type NewZone struct {
 	// secondary of the new zone, which is how a cluster's nodes come to
 	// share one
 	Catalog string
+	// SerialByDate has a zone of the server's own number its changes by the
+	// day, 2026101001, where the default counts up from 1
+	SerialByDate bool
+
+	// TransferProtocol is what a copy transfers over - Tcp, Tls or Quic -
+	// and TSIGKeyName the key it signs its transfers with, by name
+	TransferProtocol, TSIGKeyName string
+	// ValidateZone has a Secondary check each transfer against the zone's
+	// ZONEMD record, and switch itself off when one does not match
+	ValidateZone bool
+
+	// EmptyForwarder makes a Forwarder zone with no record in it, where the
+	// default makes it with the one that sends its names on
+	EmptyForwarder bool
+	// ForwarderProtocol is how a Forwarder zone's name server is asked -
+	// Udp, Tcp, Tls, Https or Quic - DNSSECValidation whether its answers
+	// are validated, and Proxy what it is reached through
+	ForwarderProtocol string
+	DNSSECValidation  bool
+	Proxy             *Proxy
+}
+
+// Proxy is what a forwarder is reached through.
+type Proxy struct {
+	// Type is NoProxy, DefaultProxy (the server's own, from its settings),
+	// Http or Socks5
+	Type     string
+	Address  string
+	Port     int
+	Username string
+	// Password is sent and never read back
+	Password string
+}
+
+// params are a proxy as the calls that take one are sent it.
+func (p *Proxy) params(into url.Values) {
+	if p == nil {
+		return
+	}
+	set(into, map[string]string{"proxyType": p.Type, "proxyAddress": p.Address, "proxyUsername": p.Username, "proxyPassword": p.Password})
+	if p.Port > 0 {
+		into.Set("proxyPort", strconv.Itoa(p.Port))
+	}
 }
 
 // CreateZone creates an authoritative zone and returns the name the server
@@ -125,9 +200,16 @@ func (c *Client) CreateZone(ctx context.Context, zone NewZone) (string, error) {
 	if zone.Catalog != "" {
 		params.Set("catalog", zone.Catalog)
 	}
-	if zone.Forwarder != "" {
-		params.Set("forwarder", zone.Forwarder)
+	set(params, map[string]string{"forwarder": zone.Forwarder, "zoneTransferProtocol": zone.TransferProtocol, "tsigKeyName": zone.TSIGKeyName, "protocol": zone.ForwarderProtocol})
+	for param, on := range map[string]bool{"useSoaSerialDateScheme": zone.SerialByDate, "validateZone": zone.ValidateZone, "dnssecValidation": zone.DNSSECValidation} {
+		if on {
+			params.Set(param, yes)
+		}
 	}
+	if zone.EmptyForwarder {
+		params.Set("initializeForwarder", "false")
+	}
+	zone.Proxy.params(params)
 
 	var out struct {
 		Domain string `json:"domain"`
@@ -146,6 +228,17 @@ func (c *Client) DeleteZone(ctx context.Context, zone string) error {
 	}
 
 	return c.write(ctx, "zones/delete", url.Values{"zone": {zone}}, nil)
+}
+
+// DeleteZones deletes several zones in one call, each with every record in
+// it. The server stops at the first it cannot delete, with the ones before
+// it gone.
+func (c *Client) DeleteZones(ctx context.Context, zones []string) error {
+	if len(zones) == 0 || slices.Contains(zones, "") {
+		return errors.New("zones/delete: which zones")
+	}
+
+	return c.write(ctx, "zones/delete", url.Values{"zones": {strings.Join(zones, ",")}}, nil)
 }
 
 // ResyncZone has a copy of a zone - a Secondary or a Stub - transfer from its

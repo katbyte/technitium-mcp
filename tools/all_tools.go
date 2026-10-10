@@ -58,8 +58,8 @@ type Options struct {
 // for; the technitium-mcp binary defaults to core instead (see
 // cli.FlagData.ToolOptions).
 //
-// --toolsets also takes a resource family - server, zone, record, dns, cache, dhcp, block, log, audit - which is every
-// tool with that prefix. Those are derived from the registered names rather
+// --toolsets also takes a resource family - zone, record, dhcp, user, app and so on - which is every tool with that
+// prefix. Those are derived from the registered names rather
 // than listed here, so they cannot go stale.
 //
 // Every tool belongs to exactly one set (TestToolsetsPartition proves it), and
@@ -77,30 +77,54 @@ var Toolsets = map[string][]string{
 	// find what is wrong: each audit reads every zone whole and answers
 	// with what it found at fault, and audit_all with how much each found
 	"audit": {
-		"audit_all", "audit_servers", "audit_targets", "audit_reverse", "audit_overlaps", "audit_naming", "audit_state", "audit_dhcp", "audit_blocking", "audit_zones", "audit_security", "audit_split",
+		"audit_all", "audit_servers", "audit_targets", "audit_reverse", "audit_overlaps", "audit_naming", "audit_state", "audit_dhcp", "audit_blocking", "audit_zones", "audit_security", "audit_split", "audit_cluster", "audit_access", "audit_dnssec", "audit_queries", "audit_apps",
 	},
 	// how the servers are set up and what they are doing
 	"ops": {
-		"server_settings", "server_stats", "log_search", "zone_get", "zone_export",
+		"server_settings", "server_stats", "log_search", "zone_get", "zone_export", "server_metrics", "settings_get", "log_files", "log_read", "log_export",
+		// and, with --enable-write, keeping one running: any setting changed,
+		// its transfer keys, a backup taken and restored, and what it keeps
+		// of the past cleared
+		"settings_set", "tsig_key_set", "tsig_key_delete", "settings_backup", "settings_restore", "stats_delete", "log_delete",
 	},
 	// what the servers refuse to resolve, and why: their lists of blocked
 	// and allowed names, and with --enable-write the entries on them
 	"block": {
-		"block_check", "block_list", "block_set", "block_delete", "block_switch", "block_lists_set",
+		"block_check", "block_list", "block_set", "block_delete", "block_switch", "block_lists_set", "block_tree", "block_import", "block_flush",
 	},
 	// the addresses the servers lease: who has which, and with
 	// --enable-write keeping one for a machine
 	"dhcp": {
-		"dhcp_scopes", "dhcp_leases", "dhcp_reservation_set", "dhcp_reservation_delete", "dhcp_lease_delete", "dhcp_scope_set",
+		"dhcp_scopes", "dhcp_leases", "dhcp_reservation_set", "dhcp_reservation_delete", "dhcp_lease_delete", "dhcp_scope_set", "dhcp_lease_reserve", "dhcp_scope_delete",
 	},
 	// change what the zones hold: every tool here needs --enable-write
 	"edit": {
-		"record_set", "record_delete", "record_repoint", "cache_flush", "zone_create", "zone_edit", "zone_resync",
+		"record_set", "record_delete", "record_repoint", "cache_flush", "zone_create", "zone_edit", "zone_resync", "zone_clone", "zone_convert", "zone_import", "zone_delete", "dns_import",
+	},
+	// sign a zone and look after its keys: reading needs nothing, and every
+	// change needs --enable-write
+	"dnssec": {
+		"dnssec_get", "dnssec_sign", "dnssec_unsign", "dnssec_edit", "dnssec_key_add", "dnssec_key_edit", "dnssec_key_delete",
+	},
+	// make, grow, shrink and end a cluster of servers: reading needs
+	// nothing, and every change needs --enable-write
+	"cluster": {
+		"cluster_get", "cluster_create", "cluster_join", "cluster_edit", "cluster_promote", "cluster_node_delete", "cluster_leave", "cluster_delete",
+	},
+	// who may sign in and what each may do: accounts, groups, sessions and
+	// tokens, permissions, and single sign-on
+	"admin": {
+		"user_list", "user_get", "user_set", "user_delete", "group_list", "group_set", "group_delete", "session_list", "session_delete", "token_create", "access_get", "access_set", "sso_get", "sso_set", "account_get", "account_edit",
+	},
+	// the DNS apps a server runs: what is installed, what the store has,
+	// and each app's configuration
+	"apps": {
+		"app_list", "app_config_get", "app_install", "app_config_set", "app_delete",
 	},
 }
 
 // ToolsetOrder is the order a listing shows the sets in: the base first.
-var ToolsetOrder = []string{mcpregistry.Core, "audit", "ops", "block", "dhcp", "edit"}
+var ToolsetOrder = []string{mcpregistry.Core, "audit", "ops", "block", "dhcp", "edit", "dnssec", "cluster", "admin", "apps"}
 
 // EssentialTools is the curated preset selected by --allow-tools essential:
 // enough to see what the servers are and read what they hold.
@@ -151,6 +175,9 @@ var toolHints = map[string]mcpregistry.Hints{
 	// kept answers dropped, which the next query fetches again; a second
 	// drop finds nothing
 	"cache_flush": {Idempotent: true},
+	// a name's records of a type written over with the ones another name
+	// server has: the same again writes the same
+	"dns_import": {Idempotent: true},
 	// a reservation's address, name or comment written over; the same again
 	// finds it so and changes nothing
 	"dhcp_reservation_set": {Idempotent: true},
@@ -172,6 +199,70 @@ var toolHints = map[string]mcpregistry.Hints{
 	"block_switch": {},
 	// the set of lists written over; the same again finds it so
 	"block_lists_set": {Idempotent: true},
+	// a zone made beside the one it copies, which is left as it was; made
+	// again, the name is taken and it is refused
+	"zone_clone": {Additive: true},
+	// a zone's type written over, and with it what the old type kept; the
+	// same again finds it so
+	"zone_convert": {Idempotent: true},
+	// records written over, and with replace_zone every other one taken
+	// away; the same file again leaves the zone as the first time did
+	"zone_import": {Idempotent: true},
+	// keys and signatures added to a zone whose own records are left as
+	// they were; signed again, it is refused
+	"dnssec_sign": {Additive: true},
+	// the proof of what is not there rebuilt and a TTL written over; the
+	// same again finds it so
+	"dnssec_edit": {Idempotent: true},
+	// a key added beside the ones there are
+	"dnssec_key_add": {Additive: true},
+	// a key replaced or taken out of use, which starts something the server
+	// then finishes by itself; asked again it starts another
+	"dnssec_key_edit": {},
+	// a cluster made of a server that keeps everything it had; made again
+	// under the same domain, it is found so
+	"cluster_create": {Additive: true, Idempotent: true},
+	// the server's settings, apps, accounts and lists written over with
+	// the primary's
+	"cluster_join": {},
+	// intervals and addresses written over; the same again finds them so,
+	// but a fetch asked for again fetches again
+	"cluster_edit": {},
+	// the primary there was put out of the cluster and this node put in
+	// its place
+	"cluster_promote": {},
+	// an account made, or its password, groups and state written over; the
+	// same again finds it so
+	"user_set": {Idempotent: true},
+	// a group made, or its members written over; the same again finds it so
+	"group_set": {Idempotent: true},
+	// a token made beside the ones there are, which takes nothing away
+	"token_create": {Additive: true},
+	// what an account or a group may do written over, or taken off the
+	// list; the same again finds it so
+	"access_set": {Idempotent: true},
+	// single sign-on's settings written over; the same again finds them so
+	"sso_set": {Idempotent: true},
+	// a password, a second factor or a session changed or ended as the
+	// account itself; a token asked for again is another token
+	"account_edit": {},
+	// settings written over; the same again finds them so
+	"settings_set": {Idempotent: true},
+	// a key added or its secret written over; the same again finds it so
+	"tsig_key_set": {Idempotent: true},
+	// the server is only read, and a file written on this machine
+	"settings_backup": {WritesHere: true},
+	// names added to a list, which takes nothing off it; the same again
+	// finds them there
+	"block_import": {Additive: true, Idempotent: true},
+	// a lease made a reservation or back: the same again finds it so
+	"dhcp_lease_reserve": {Idempotent: true},
+	// an app installed or written over with a newer one; the same again
+	// finds it there. The server fetching it from its maker's store is the
+	// server's own fetch, not this tool sending anything out
+	"app_install": {Idempotent: true},
+	// an app's configuration written over; the same again finds it so
+	"app_config_set": {Idempotent: true},
 }
 
 // queued is every tool queued so far, in go-kt's registry, which is made
@@ -243,6 +334,7 @@ func queueTools(r *registry) {
 	registerRecordWriteTools(r)
 	registerRepointTool(r)
 	registerResolveTools(r)
+	registerImportTool(r)
 	registerCacheTools(r)
 	registerDHCPTools(r)
 	registerDHCPWriteTools(r)
@@ -253,6 +345,15 @@ func queueTools(r *registry) {
 	registerZoneWriteTools(r)
 	registerDHCPScopeTools(r)
 	registerBlockingWriteTools(r)
+	registerZoneMoreTools(r)
+	registerDNSSECTools(r)
+	registerClusterTools(r)
+	registerAccountTools(r)
+	registerAccessTools(r)
+	registerMaintainTools(r)
+	registerOpsMoreTools(r)
+	registerMoreListTools(r)
+	registerAppTools(r)
 	registerSplitAudit(r)
 	registerNameAudit(r)
 	registerAudits(r)

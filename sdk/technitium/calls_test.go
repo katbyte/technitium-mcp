@@ -229,8 +229,7 @@ func TestZoneRecords(t *testing.T) {
 		{"A", "10.0.0.4", ""},
 		{"AAAA", "fd00::4", ""},
 		{"CNAME", "a.example.com", "a.example.com"},
-		// a type the client has no layout for is written field by field
-		{"SSHFP", "algorithm=Ed25519 fingerprint=AB12 fingerprintType=SHA256", ""},
+		{"SSHFP", "Ed25519 SHA256 AB12", ""},
 	}
 	for i, w := range want {
 		rec := &got.Records[i]
@@ -330,8 +329,11 @@ func TestAddAndDeleteRecord(t *testing.T) {
 
 	// what cannot be sent whole is not sent
 	sent := len(fake.Requests("zones/records/add")) + len(fake.Requests("zones/records/delete"))
-	if _, err := c.AddRecord(t.Context(), technitium.NewRecord{Name: "k.example.com", Type: "SSHFP", Data: technitium.RData{"fingerprint": "AB12"}}); err == nil || !strings.Contains(err.Error(), "cannot write record type SSHFP yet") {
-		t.Errorf("a type the client cannot write = %v", err)
+	if _, err := c.AddRecord(t.Context(), technitium.NewRecord{Name: "example.com", Type: "SOA", Data: technitium.RData{"primaryNameServer": "ns1"}}); err == nil || !strings.Contains(err.Error(), "a SOA record is not added, changed or deleted as other records are") {
+		t.Errorf("a type that is not written as a record is = %v", err)
+	}
+	if _, err := c.AddRecord(t.Context(), technitium.NewRecord{Name: "k.example.com", Type: "SSHFP", Data: technitium.RData{"fingerprint": "AB12"}}); err == nil || !strings.Contains(err.Error(), "record type SSHFP needs algorithm, fingerprintType, fingerprint, and algorithm is not given") {
+		t.Errorf("a record with a field missing = %v", err)
 	}
 	if _, err := c.AddRecord(t.Context(), technitium.NewRecord{Name: "example.com", Type: "MX", Data: technitium.RData{"exchange": "mail.example.com"}}); err == nil || !strings.Contains(err.Error(), "record type MX needs preference, exchange, and preference is not given") {
 		t.Errorf("an MX with no preference = %v", err)

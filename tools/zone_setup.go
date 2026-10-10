@@ -50,6 +50,15 @@ type zoneSetup struct {
 	PrimaryAddresses []string `json:"primary_addresses,omitempty" jsonschema:"for a copy: where it transfers from"`
 	PrimaryProtocol  string   `json:"primary_protocol,omitempty"  jsonschema:"for a copy: how it transfers, Tcp, Tls or Quic"`
 	PrimaryKey       string   `json:"primary_key,omitempty"       jsonschema:"for a copy: the key it signs its transfers with, by name"`
+	ValidateZone     bool     `json:"validate_zone,omitempty"     jsonschema:"for a copy: each transfer is checked against the zone's ZONEMD record, and the zone switches itself off when one does not match"`
+
+	SerialByDate         bool     `json:"serial_by_date,omitempty"         jsonschema:"the zone numbers its changes by the day, 2026101001, where the default counts up from 1"`
+	OverridesCatalog     []string `json:"overrides_catalog,omitempty"      jsonschema:"for a member of a catalog: what it keeps its own setting for where the catalog has one for all its members, of query, transfer and notify"`
+	NotifyCatalogServers []string `json:"notify_catalog_servers,omitempty" jsonschema:"for a catalog zone: the servers told of a change to the catalog itself"`
+
+	// keys are the transfer keys the server has, which a zone's options may name; and policies the keys an update must be signed with, as they are held
+	keys     []string
+	policies []technitium.UpdatePolicy
 }
 
 // zoneSetupOf reads how a server serves a zone it holds: the zone's options,
@@ -79,6 +88,13 @@ func zoneSetupOf(ctx context.Context, srv *servers.Server, zone string) (*zoneSe
 	for _, policy := range o.UpdateSecurityPolicies {
 		row.UpdateKeys = append(row.UpdateKeys, policy.TSIGKeyName+" for "+policy.Domain+": "+strings.Join(policy.AllowedTypes, ", "))
 	}
+	row.ValidateZone, row.NotifyCatalogServers, row.keys, row.policies = o.ValidateZone, o.NotifySecondaryCatalogsNameServers, o.AvailableTSIGKeyNames, o.UpdateSecurityPolicies
+	for what, overrides := range map[string]bool{"query": o.OverrideCatalogQueryAccess, "transfer": o.OverrideCatalogZoneTransfer, "notify": o.OverrideCatalogNotify} {
+		if overrides {
+			row.OverridesCatalog = append(row.OverridesCatalog, what)
+		}
+	}
+	slices.Sort(row.OverridesCatalog)
 
 	at, err := srv.Client.RecordsAt(ctx, zones[i].Name, zones[i].Name)
 	if err != nil {
@@ -90,7 +106,7 @@ func zoneSetupOf(ctx context.Context, srv *servers.Server, zone string) (*zoneSe
 			row.NameServers = append(row.NameServers, cleanName(rec.Target()))
 		case "SOA":
 			soa := rec.SOA()
-			row.SOAPrimary, row.Responsible, row.Refresh, row.Retry, row.Expire, row.Minimum = cleanName(soa.Primary), soa.Responsible, soa.Refresh, soa.Retry, soa.Expire, soa.Minimum
+			row.SOAPrimary, row.Responsible, row.Refresh, row.Retry, row.Expire, row.Minimum, row.SerialByDate = cleanName(soa.Primary), soa.Responsible, soa.Refresh, soa.Retry, soa.Expire, soa.Minimum, soa.SerialByDate
 		default:
 		}
 	}

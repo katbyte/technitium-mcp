@@ -85,8 +85,8 @@ func TestSurfaceSize(t *testing.T) {
 	for _, kind := range kinds {
 		counts[kind]++
 	}
-	if len(kinds) != 43 || counts["read"] != 28 || counts["write"] != 11 || counts["delete"] != 4 {
-		t.Errorf("surface = %d tools: %v, want 43 with 28 read, 11 write, 4 delete", len(kinds), counts)
+	if len(kinds) != 106 || counts["read"] != 51 || counts["write"] != 35 || counts["delete"] != 20 {
+		t.Errorf("surface = %d tools: %v, want 106 with 51 read, 35 write, 20 delete", len(kinds), counts)
 	}
 }
 

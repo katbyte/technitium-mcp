@@ -96,21 +96,26 @@ func statsRowOf(ctx context.Context, srv *servers.Server, window technitium.Stat
 	if err != nil {
 		return row, err
 	}
-	// the server sends ten of each list with its totals: more are asked for by list
+	// the server sends ten of each list with its totals: more are asked for by list, as are the clients when they are wanted another way
+	var lists []string
+	if window.OnlyRateLimited || window.NoReverseLookup {
+		lists = []string{technitium.TopClients}
+	}
 	if top > topDefault {
-		for _, list := range []string{technitium.TopClients, technitium.TopDomains, technitium.TopBlockedDomains} {
-			more, err := srv.Client.TopStats(ctx, window, list, top)
-			if err != nil {
-				return row, err
-			}
-			switch list {
-			case technitium.TopClients:
-				stats.TopClients = more.TopClients
-			case technitium.TopDomains:
-				stats.TopDomains = more.TopDomains
-			default:
-				stats.TopBlockedDomains = more.TopBlockedDomains
-			}
+		lists = []string{technitium.TopClients, technitium.TopDomains, technitium.TopBlockedDomains}
+	}
+	for _, list := range lists {
+		more, err := srv.Client.TopStats(ctx, window, list, top)
+		if err != nil {
+			return row, err
+		}
+		switch list {
+		case technitium.TopClients:
+			stats.TopClients = more.TopClients
+		case technitium.TopDomains:
+			stats.TopDomains = more.TopDomains
+		default:
+			stats.TopBlockedDomains = more.TopBlockedDomains
 		}
 	}
 
@@ -160,10 +165,13 @@ func registerStatsTools(r *registry) {
 	type serverStatsIn struct {
 		serverArg
 
-		Window string `json:"window,omitempty" jsonschema:"the window the server keeps to count over: hour (the default), day, week, month or year"`
-		From   string `json:"from,omitempty"   jsonschema:"or a window of one's own, with to: its start in UTC as 2026-10-09T00:00:00Z, or a date. The server counts such a window in whole days"`
-		To     string `json:"to,omitempty"     jsonschema:"the end of a window of one's own"`
-		Top    int    `json:"top,omitempty"    jsonschema:"how many of the clients and names that lead each list to give (default 10, at most 1000)"`
+		Window        string `json:"window,omitempty"          jsonschema:"the window the server keeps to count over: hour (the default), day, week, month or year"`
+		From          string `json:"from,omitempty"            jsonschema:"or a window of one's own, with to: its start in UTC as 2026-10-09T00:00:00Z, or a date. The server counts such a window in whole days"`
+		To            string `json:"to,omitempty"              jsonschema:"the end of a window of one's own"`
+		Top           int    `json:"top,omitempty"             jsonschema:"how many of the clients and names that lead each list to give (default 10, at most 1000)"`
+		EveryType     bool   `json:"every_type,omitempty"      jsonschema:"count every record type asked for by itself, where the server otherwise gives the leading ones and the rest as one"`
+		RateLimited   bool   `json:"rate_limited,omitempty"    jsonschema:"list only the clients the server is holding back for asking too much, in place of the clients that lead"`
+		ByAddressOnly bool   `json:"by_address_only,omitempty" jsonschema:"list clients by address alone, without the server looking up a name for each, which on a slow reverse zone is what takes the time"`
 	}
 	type serverStatsOut struct {
 		Window  string     `json:"window"         jsonschema:"the window counted over"`
@@ -215,6 +223,7 @@ func registerStatsTools(r *registry) {
 			return nil, serverStatsOut{}, fmt.Errorf("top %d: the most of each list is %d", top, topMost)
 		default:
 		}
+		window.EveryQueryType, window.OnlyRateLimited, window.NoReverseLookup = in.EveryType, in.RateLimited, in.ByAddressOnly
 		picked, err := r.servers.Pick(in.Server)
 		if err != nil {
 			return nil, serverStatsOut{}, err

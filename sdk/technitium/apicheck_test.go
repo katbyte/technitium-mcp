@@ -18,7 +18,7 @@ import (
 
 // callers are the client's own methods that make an API call, each taking
 // the call's path as its second argument.
-var callers = []string{"read", "readWhole", "readText", "write"}
+var callers = []string{"read", "readWhole", "readText", "readFile", "write", "writeWhole", "upload"}
 
 // parsePackage reads this package's own source: the files the client is
 // built from, or its tests.

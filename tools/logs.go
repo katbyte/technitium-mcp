@@ -180,6 +180,7 @@ func registerLogTools(r *registry) {
 		Result      string `json:"result,omitempty"       jsonschema:"only queries answered so: NoError, NxDomain, ServerFailure or Refused"`
 		Source      string `json:"source,omitempty"       jsonschema:"only queries answered from: Authoritative (the server's own zones), Recursive, Cached, Blocked, UpstreamBlocked or CacheBlocked"`
 		Protocol    string `json:"protocol,omitempty"     jsonschema:"only queries that came by: Udp, Tcp, Tls, Https or Quic"`
+		Class       string `json:"class,omitempty"        jsonschema:"only queries asked in this class: IN, which nearly every query is, or CH for the few that ask a server about itself"`
 		Last        string `json:"last,omitempty"         jsonschema:"only queries asked in the last while, as 30m, 6h or 7d"`
 		Since       string `json:"since,omitempty"        jsonschema:"only queries asked from this time on, in UTC as 2026-10-09T14:00:00Z, or a date"`
 		Until       string `json:"until,omitempty"        jsonschema:"only queries asked before this time"`
@@ -210,7 +211,7 @@ func registerLogTools(r *registry) {
 		if q.Protocol, err = oneOf("protocol", in.Protocol, logProtocols); err != nil {
 			return nil, logSearchOut{}, err
 		}
-		q.Type, q.OldestFirst = strings.ToUpper(strings.TrimSpace(in.Type)), in.OldestFirst
+		q.Type, q.Class, q.OldestFirst = strings.ToUpper(strings.TrimSpace(in.Type)), strings.ToUpper(strings.TrimSpace(in.Class)), in.OldestFirst
 		// the log matches a name whole, with a * for any run: text given without one may be anywhere in the name
 		if q.Name = strings.TrimSuffix(strings.TrimSpace(in.Name), "."); q.Name != "" && !strings.Contains(q.Name, "*") {
 			q.Name = "*" + q.Name + "*"

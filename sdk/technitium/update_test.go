@@ -164,10 +164,13 @@ func TestParseValue(t *testing.T) {
 	}
 
 	for name, tc := range map[string]struct{ recordType, value, want string }{
-		"no value":           {"A", " ", "none was given"},
-		"too few":            {"MX", "mail.example.com", "is 1 of those"},
-		"too many":           {"A", "10.0.0.4 10.0.0.5", "is 2 words"},
-		"a type not written": {"SSHFP", "1 2 AB", "cannot write record type SSHFP"},
+		"no value":                        {"A", " ", "none was given"},
+		"too few":                         {"MX", "mail.example.com", "is 1 of those"},
+		"too many":                        {"A", "10.0.0.4 10.0.0.5", "is 2 words"},
+		"a type not written":              {"RRSIG", "A 13 2 300", "a RRSIG record is not added, changed or deleted as other records are"},
+		"a type with no layout, in words": {"LOC", "52 22 23.000 N", "takes one as its bytes in hex"},
+		"an app with no class":            {"APP", "SplitHorizon", "is one word"},
+		"a service with no target":        {"HTTPS", "1", "is 1 of those"},
 	} {
 		if _, err := technitium.ParseValue(tc.recordType, tc.value); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: ParseValue(%s, %q) = %v, want an error saying %q", name, tc.recordType, tc.value, err, tc.want)

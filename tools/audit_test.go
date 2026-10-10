@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -41,7 +43,7 @@ func auditPair(t *testing.T) *pair {
 	p := newPair(t)
 	p.dock.Answer("zones/list", `{"zones":[
 		{"name":"example.com","type":"Primary","soaSerial":7},
-		{"name":"van.example.com","type":"Primary","soaSerial":3},
+		{"name":"van.example.com","type":"Primary","soaSerial":3,"dnssecStatus":"SignedWithNSEC"},
 		{"name":"apex.example","type":"Primary","soaSerial":1},
 		{"name":"0.0.10.in-addr.arpa","type":"Primary","soaSerial":2},
 		{"name":"off.example","type":"Primary","soaSerial":1,"disabled":true},
@@ -69,13 +71,14 @@ func auditPair(t *testing.T) *pair {
 		addr("*.wild.example.com", "10.0.0.8"),
 		addr("two.example.com", "10.0.0.5"), addr("two.example.com", "10.0.1.5"),
 		addr("bad_host.example.com", "10.0.0.6"), addr("_ok.example.com", "10.0.0.61"),
-		addr("technitium.example.com", "10.0.0.10"), addr("technitum.example.com", "10.0.0.11"), addr("server1.example.com", "10.0.0.12"), addr("server2.example.com", "10.0.0.13"),
+		addr("technitium.example.com", "10.0.0.10"), addr("technitum.example.com", "10.0.0.11"), addr("server1.example.com", "10.0.0.12"), addr("server2.example.com", "10.0.0.13"), addr("pimox5a.example.com", "10.0.0.19"), addr("pimox5b.example.com", "10.0.0.20"),
 		strings.Replace(addr("fast.example.com", "10.0.0.14"), `"ttl":3600`, `"ttl":30`, 1), strings.Replace(addr("slow.example.com", "10.0.0.15"), `"ttl":3600`, `"ttl":1209600`, 1),
 		addr("spacey.example.com", "10.0.0.16", `"comments":"two  spaces "`),
 		addr("old.example.com", "10.0.0.17", `"disabled":true`), addr("temp.example.com", "10.0.0.18", `"expiryTtl":172800`),
 		rec("txt.example.com", "TXT", `{"text":"free  text  is  its  own"}`),
 	)
-	zoneOf(p, false, "van.example.com", addr("emby.van.example.com", "10.0.0.4"), addr("dock.van.example.com", "10.0.0.2"))
+	// van.example.com names a node of the cluster that is not configured here as its name server, and holds a signature the server has let expire
+	zoneOf(p, false, "van.example.com", rec("van.example.com", "NS", `{"nameServer":"ns3.cluster.example"}`), rec("van.example.com", "RRSIG", `{"typeCovered":"NS","algorithm":"ECDSAP256SHA256","keyTag":22,"signatureExpiration":"2020-01-01T00:00:00Z","signatureInception":"2019-12-01T00:00:00Z","signersName":"van.example.com"}`), addr("emby.van.example.com", "10.0.0.4"), addr("dock.van.example.com", "10.0.0.2"))
 	zoneOf(p, false, "apex.example", rec("apex.example", "SOA", `{"primaryNameServer":"dock"}`), cname("apex.example", "elsewhere.example.net"))
 	zoneOf(p, false, "0.0.10.in-addr.arpa",
 		ptr("4.0.0.10.in-addr.arpa", "emby.van.example.com"),
@@ -98,8 +101,66 @@ func auditPair(t *testing.T) *pair {
 	auditDHCPOf(p)
 	auditBlockingOf(p)
 	auditSetupOf(p)
+	auditMoreOf(p)
 
 	return p
+}
+
+// A node of a cluster, an account and an app as a canned server gives each.
+func nodeJSON(id int, name, kind, state, version string) string {
+	return fmt.Sprintf(`{"id":%d,"name":"%s.cluster.example","url":"https://%s.cluster.example:53443/","ipAddresses":["10.0.0.%d"],"type":%q,"state":%q,"version":%q,"lastSeen":"2020-01-01T00:00:00Z"}`, id, name, name, id, kind, state, version)
+}
+
+func userJSON(name, more string) string {
+	return fmt.Sprintf(`{"username":%q,"displayName":%q,"recentSessionLoggedOn":"2026-10-01T00:00:00Z","memberOfGroups":[],"sessions":[]%s}`, name, name, more)
+}
+
+func appJSON(name, version string, logs bool) string {
+	return fmt.Sprintf(`{"name":%q,"version":%q,"dnsApps":[{"classPath":"App.%s","isQueryLogger":%v,"isQueryLogs":%v}]}`, name, version, strings.ReplaceAll(name, " ", ""), logs, logs)
+}
+
+// auditMoreOf gives the pair what each says of its cluster, its accounts,
+// its signed zone, its queries and its apps. They are a cluster that is not
+// whole: dock, its primary, cannot reach rpi and lists a third node nobody
+// configured; rpi, a version behind, has not fetched the configuration in
+// years and does not list the third. dock has an administrator with no
+// second factor, an account nobody used, one switched off with a token left,
+// and a section everyone may change; a signed zone with a key waiting for
+// its DS, one never published, one never replaced and one of an old
+// algorithm; a day in which a tenth of its queries failed, most from one
+// client, and a name asked for that does not exist; and an app behind the
+// store that rpi does not run. rpi cannot resolve, keeps no log, and will
+// not list its accounts.
+func auditMoreOf(p *pair) {
+	p.dock.Answer("admin/cluster/state", `{"clusterInitialized":true,"dnsServerDomain":"dock.cluster.example","version":"15.6","clusterDomain":"cluster.example","configRefreshIntervalSeconds":900,"serverIpAddresses":["10.20.0.2","10.20.5.2"],"clusterNodes":[`+nodeJSON(2, "dock", "Primary", "Self", "15.6")+`,`+nodeJSON(3, "rpi", "Secondary", "Unreachable", "15.5")+`,`+nodeJSON(9, "ns3", "Secondary", "Connected", "15.6")+`]}`)
+	p.rpi.Answer("admin/cluster/state", `{"clusterInitialized":true,"dnsServerDomain":"rpi.cluster.example","version":"15.5","clusterDomain":"cluster.example","configRefreshIntervalSeconds":900,"configLastSynced":"2020-01-01T00:00:00Z","serverIpAddresses":["10.20.0.3"],"clusterNodes":[`+nodeJSON(2, "dock", "Primary", "Connected", "15.6")+`,`+nodeJSON(3, "rpi", "Secondary", "Self", "15.5")+`]}`)
+
+	p.dock.Answer("admin/users/list", `{"users":[`+userJSON("admin", "")+`,`+userJSON("never", "")+`,`+userJSON("off", "")+`,`+userJSON("careful", "")+`]}`)
+	p.dock.AnswerWhen("admin/users/get", "user", "admin", strings.Replace(userJSON("admin", ""), `"memberOfGroups":[],"sessions":[]`, `"memberOfGroups":["Administrators"],"sessions":[{"type":"ApiToken","tokenName":"mcp"}]`, 1))
+	p.dock.AnswerWhen("admin/users/get", "user", "never", strings.Replace(userJSON("never", ""), "2026-10-01T00:00:00Z", "0001-01-01T00:00:00", 1))
+	p.dock.AnswerWhen("admin/users/get", "user", "off", strings.Replace(userJSON("off", `,"disabled":true`), `"sessions":[]`, `"sessions":[{"type":"ApiToken","tokenName":"left"}]`, 1))
+	p.dock.AnswerWhen("admin/users/get", "user", "careful", strings.Replace(userJSON("careful", `,"totpEnabled":true`), `"memberOfGroups":[]`, `"memberOfGroups":["Administrators"]`, 1))
+	p.dock.Answer("admin/permissions/list", `{"permissions":[{"section":"Cache","userPermissions":[],"groupPermissions":[{"name":"Administrators","canView":true,"canModify":true,"canDelete":true},{"name":"Everyone","canView":true,"canModify":true,"canDelete":false}]},{"section":"Zones","userPermissions":[],"groupPermissions":[{"name":"Everyone","canView":true,"canModify":false,"canDelete":false}]}]}`)
+	p.rpi.Fail("admin/users/list", "error", "Access was denied.")
+
+	p.dock.Answer("zones/dnssec/properties/get", `{"name":"van.example.com","type":"Primary","dnssecStatus":"SignedWithNSEC","dnsKeyTtl":3600,"dnssecPrivateKeys":[{"keyTag":11,"keyType":"KeySigningKey","algorithm":"ECDSAP256SHA256","state":"Ready","stateChangedOn":"2026-10-01T00:00:00Z","rolloverDays":0},{"keyTag":22,"keyType":"ZoneSigningKey","algorithm":"ECDSAP256SHA256","state":"Active","rolloverDays":0},{"keyTag":33,"keyType":"ZoneSigningKey","algorithm":"ECDSAP256SHA256","state":"Generated","stateChangedOn":"2026-09-01T00:00:00Z","rolloverDays":30},{"keyTag":44,"keyType":"ZoneSigningKey","algorithm":"RSASHA1","state":"Active","isRetiring":true,"rolloverDays":30}]}`)
+	p.dock.Answer("zones/dnssec/viewDS", `{"name":"van.example.com","type":"Primary","dnssecStatus":"SignedWithNSEC","dsRecords":[{"keyTag":11,"dnsKeyState":"Ready","algorithm":"ECDSAP256SHA256","publicKey":"cHVibGlj","digests":[{"digestType":"SHA256","digest":"AB12"}]}]}`)
+
+	p.dock.AnswerWhole("dnsClient/healthCheck", `{"server":"dock","status":"ok"}`)
+	p.rpi.Fail("dnsClient/healthCheck", "error", "DNS Server failed to resolve the request.")
+	p.dock.AnswerWhen("dashboard/stats/get", "type", "LastDay", `{"stats":{"totalQueries":2000,"totalServerFailure":200,"blockListZones":0},"topClients":[{"name":"10.0.0.50","domain":"busy.van.example.com","hits":1500},{"name":"10.0.0.51","hits":1000},{"name":"10.0.0.52","hits":200}],"topDomains":[{"name":"emby.van.example.com","hits":1200},{"name":"dock.van.example.com","hits":500},{"name":"www.example.org","hits":5000}]}`)
+	p.dock.Answer("apps/list", `{"apps":[`+appJSON("Query Logs (Sqlite)", "8", true)+`,`+appJSON("Split Horizon", "1.0", false)+`]}`)
+	p.rpi.Answer("apps/list", `{"apps":[]}`)
+	p.dock.Answer("apps/config/get", `{"config":"{\"enableLogging\":true,\"maxLogDays\":7}"}`)
+	p.dock.Answer("apps/listStoreApps", `{"storeApps":[{"name":"Split Horizon","version":"1.1","url":"https://download.example.org/SplitHorizonApp.zip","size":"11 KB","installed":true,"installedVersion":"1.0","updateAvailable":true},{"name":"Query Logs (Sqlite)","version":"8","url":"https://download.example.org/QueryLogsSqliteApp.zip","size":"1 MB","installed":true,"installedVersion":"8","updateAvailable":false}]}`)
+	p.rpi.Fail("apps/listStoreApps", "error", "Could not reach the app store.")
+	var asked []string
+	for name, times := range map[string]int{"nothing.van.example.com": 6, "rare.example.com": 2, "elsewhere.example.net": 7} {
+		for range times {
+			asked = append(asked, fmt.Sprintf(`{"rowNumber":1,"timestamp":"2026-10-09T10:00:00Z","clientIpAddress":"10.0.0.50","protocol":"Udp","responseType":"Authoritative","rcode":"NxDomain","qname":%q,"qtype":"A","qclass":"IN","answer":null}`, name))
+		}
+	}
+	p.dock.Answer("logs/query", `{"pageNumber":1,"totalPages":1,"totalEntries":`+strconv.Itoa(len(asked))+`,"entries":[`+strings.Join(asked, ",")+`]}`)
 }
 
 // auditSetupOf gives the pair what each says of itself and of its zones'
@@ -188,8 +249,10 @@ func auditDHCPOf(p *pair) {
 		reservedJSON("AA-00-00-00-00-05", "10.20.0.40", "twin", ""),
 		reservedJSON("AA-00-00-00-00-06", "10.20.0.40", "", ""),
 		reservedJSON("AA-00-00-00-00-07", "10.20.0.50", "printer", ""),
+		reservedJSON("00-00-00-00-00-00", "10.20.0.60", "", ""),
 	))
-	p.dock.AnswerWhen("dhcp/scopes/get", "name", "Lab", scopeJSON("Lab", "10.20.5.10", "10.20.5.19", `"domainName":"lab.example","dnsUpdates":false,"useThisDnsServer":true`))
+	// Lab names its own server twice over, and a node of the cluster that is not configured here
+	p.dock.AnswerWhen("dhcp/scopes/get", "name", "Lab", scopeJSON("Lab", "10.20.5.10", "10.20.5.19", `"domainName":"lab.example","dnsUpdates":false,"useThisDnsServer":true,"dnsServers":["10.20.5.2","10.0.0.9"]`))
 
 	leases := make([]string, 0, 14)
 	leases = append(leases,
@@ -269,8 +332,8 @@ func TestAuditServers(t *testing.T) {
 	want(t, found, "zone_missing", "van.example.com", "van.example.com is on dock and not on rpi", "dock")
 	want(t, found, "two_primaries", "example.com", "dock and rpi each hold example.com as a primary zone of their own", "dock", "rpi")
 	// the SOA is each server's own to differ in; the records that differ are said, the first few by name
-	want(t, found, "records_differ", "example.com", "30 records of example.com are not the same on dock and rpi: example.com MX 10 mail.example.com (ttl 3600) on dock alone;")
-	want(t, found, "records_differ", "example.com", "; and 25 more")
+	want(t, found, "records_differ", "example.com", "32 records of example.com are not the same on dock and rpi: example.com MX 10 mail.example.com (ttl 3600) on dock alone;")
+	want(t, found, "records_differ", "example.com", "; and 27 more")
 	want(t, found, "copy_behind", "copy.example", "dock holds copy.example at serial 5 and its primary rpi is at 6", "dock")
 	want(t, found, "sync_failed", "copy.example", "its last transfer from the primary failed", "dock")
 	want(t, found, "copy_expired", "copy.example", "has expired", "dock")
@@ -375,6 +438,7 @@ func TestAuditOverlapsNamingAndState(t *testing.T) {
 	none(t, naming, "underscore", "_ok.example.com")
 	none(t, naming, "underscore", "_sip._tcp.example.com")
 	none(t, naming, "near_duplicate", "server1.example.com")
+	none(t, naming, "near_duplicate", "pimox5a.example.com")
 	none(t, naming, "space", "txt.example.com")
 	for _, f := range naming {
 		if f["problem"] == "space" && f["fix"] != `it should read "two spaces"` {
@@ -462,10 +526,14 @@ func TestAuditDHCP(t *testing.T) {
 	none(t, found, "scope_domain_unknown", "LAN")
 	want(t, found, "scope_dns_unknown", "LAN", "scope LAN on dock tells machines to resolve through 9.9.9.9, which is no address of a server asked", "dock")
 	want(t, found, "scope_dns_missing", "LAN", "scope LAN on dock tells machines to resolve through 10.20.0.2, 9.9.9.9 and not through rpi (10.20.0.3)", "dock")
-	want(t, found, "scope_dns_missing", "Lab", "resolve through 10.20.5.2 and not through rpi (10.20.0.3)", "dock")
+	want(t, found, "scope_dns_missing", "Lab", "resolve through 10.20.5.2, 10.20.5.2, 10.0.0.9 and not through rpi (10.20.0.3)", "dock")
+	// the same server as this server and by its address; a node of the cluster that was not read is a server all the same
+	want(t, found, "scope_dns_same", "Lab", "scope Lab on dock tells machines to resolve through 10.20.5.2 twice, as this server and by its address", "dock")
+	none(t, found, "scope_dns_unknown", "Lab")
 
 	// the reservations
 	want(t, found, "reservation_outside", "10.9.9.9", "scope LAN on dock keeps 10.9.9.9 for AA-00-00-00-00-04, which is outside its network 10.20.0.0/24", "dock")
+	want(t, found, "reservation_no_mac", "10.20.0.60", "scope LAN on dock keeps 10.20.0.60 for 00-00-00-00-00-00, whose hardware address is all zeros", "dock")
 	want(t, found, "reservation_shared", "10.20.0.40", "10.20.0.40 is kept for 2 machines on dock: AA-00-00-00-00-05 (twin), AA-00-00-00-00-06", "dock")
 	want(t, found, "reservation_leased_away", "10.20.0.50", "scope LAN on dock keeps 10.20.0.50 for AA-00-00-00-00-07 (printer), and AA-00-00-00-00-99 (guest.lan.example) holds a lease on it until 2026-10-10T17:52:51Z", "dock")
 	want(t, found, "reservation_no_record", "nas.lan.example", "scope LAN on dock keeps 10.20.0.30 for AA-00-00-00-00-02 (nas), and nas.lan.example has no address record on dock", "dock")
@@ -496,7 +564,7 @@ func TestAuditDHCP(t *testing.T) {
 		t.Errorf("one server leasing alone = %v", found)
 	}
 	counts := acctest.Object(t, out["counts"], "counts")
-	for problem, n := range map[string]int{"dhcp_one_server": 1, "ranges_overlap": 0, "pool_low": 1, "scope_domain_unknown": 1, "scope_dns_unknown": 1, "scope_dns_missing": 2, "reservation_outside": 1, "reservation_shared": 1, "reservation_leased_away": 1, "reservation_record_elsewhere": 1, "static_in_pool": 1, "address_leased_elsewhere": 1, "lease_name_taken": 1, "record_left_behind": 2} {
+	for problem, n := range map[string]int{"dhcp_one_server": 1, "ranges_overlap": 0, "pool_low": 1, "scope_domain_unknown": 1, "scope_dns_unknown": 1, "scope_dns_same": 1, "scope_dns_missing": 2, "reservation_outside": 1, "reservation_no_mac": 1, "reservation_shared": 1, "reservation_leased_away": 1, "reservation_record_elsewhere": 1, "static_in_pool": 1, "address_leased_elsewhere": 1, "lease_name_taken": 1, "record_left_behind": 2} {
 		if acctest.NumOr0(counts[problem]) != n {
 			t.Errorf("%d %s, want %d: %v", acctest.NumOr0(counts[problem]), problem, n, found)
 		}
@@ -511,6 +579,13 @@ func TestAuditDHCP(t *testing.T) {
 	}
 	if one := auditFindings(t, suite, "audit_dhcp", map[string]any{"server": "dock", "problems": []string{"dhcp_one_server", "scope_dns_missing", "pool_low"}}); len(one) != 1 || one[0]["problem"] != "pool_low" || one[0]["servers"] != nil {
 		t.Errorf("dock alone = %v", one)
+	}
+
+	// a scope on every interface says this server with no address: one of the server's own beside it is the same server twice
+	p.dock.Answer("dhcp/scopes/list", `{"scopes":[`+defaultScopeListed+`,`+lanScopeListed+`,`+strings.Replace(labScopeListed, `"interfaceAddress":"10.20.5.2"`, `"interfaceAddress":"0.0.0.0"`, 1)+`]}`)
+	p.dock.AnswerWhen("dhcp/scopes/get", "name", "Lab", scopeJSON("Lab", "10.20.5.10", "10.20.5.19", `"domainName":"lab.example","dnsUpdates":false,"useThisDnsServer":true,"dnsServers":["10.20.0.2"]`))
+	if same := auditFindings(t, suite, "audit_dhcp", map[string]any{"server": "dock", "problems": []string{"scope_dns_same"}}); len(same) != 1 || !strings.Contains(acctest.Str(same[0]["detail"]), "scope Lab on dock tells machines to resolve through 10.20.0.2 twice") {
+		t.Errorf("this server on every interface beside its own address = %v", same)
 	}
 
 	// both leasing, over addresses they share
@@ -630,6 +705,8 @@ func TestAuditZones(t *testing.T) {
 	// the zone each holds as its own names a name server that is neither, and not itself
 	has("ns_unknown", "example.com", "example.com names dock.elsewhere.net as a name server of its own, which is the name of no server asked", "dock")
 	has("ns_unknown", "example.com", "dock.elsewhere.net", "rpi")
+	// a node of the cluster that is not configured here is a server all the same
+	none(t, found, "ns_unknown", "van.example.com")
 	has("ns_missing", "example.com", "dock holds example.com as its primary and calls itself dock, which none of the zone's NS records names: they name dock.elsewhere.net", "dock")
 	has("ns_missing", "example.com", "rpi holds example.com as its primary and calls itself rpi", "rpi")
 	// a zone made when the server had another name
@@ -668,6 +745,40 @@ func TestAuditZones(t *testing.T) {
 
 // audit_security reads each server's settings, sessions and zone options
 // for what is left open.
+// Reverse zones of the wrong shape: one address each where no zone holds
+// the network, and one with no PTR in it.
+func TestAuditReverseZoneShapes(t *testing.T) {
+	t.Parallel()
+
+	p := newPair(t)
+	p.dock.Answer("zones/list", `{"zones":[{"name":"162.16.16.172.in-addr.arpa","type":"Primary","soaSerial":1},{"name":"163.16.16.172.in-addr.arpa","type":"Primary","soaSerial":1},{"name":"170.16.16.172.in-addr.arpa","type":"Primary","soaSerial":1},{"name":"5.0.10.in-addr.arpa","type":"Primary","soaSerial":1},{"name":"9.9.10.in-addr.arpa","type":"Primary","soaSerial":1},{"name":"1.9.9.10.in-addr.arpa","type":"Primary","soaSerial":1},{"name":"2.9.9.10.in-addr.arpa","type":"Primary","soaSerial":1}]}`)
+	p.rpi.Answer("zones/list", `{"zones":[]}`)
+	p.both("status", `{"hasDefaultCredentials":false,"ssoEnabled":false,"server":"dock","status":"ok"}`)
+	p.both("admin/cluster/state", `{"clusterInitialized":false,"dnsServerDomain":"dock","version":"15.6"}`)
+	p.both("zones/options/get", `{"type":"Primary","queryAccess":"Allow","zoneTransfer":"Deny","notify":"None","update":"Deny"}`)
+	zoneOf(p, false, "162.16.16.172.in-addr.arpa", ptr("162.16.16.172.in-addr.arpa", "mac.guest.example"))
+	zoneOf(p, false, "163.16.16.172.in-addr.arpa", ptr("163.16.16.172.in-addr.arpa", "phone.guest.example"))
+	zoneOf(p, false, "170.16.16.172.in-addr.arpa", rec("170.16.16.172.in-addr.arpa", "SOA", `{"primaryNameServer":"dock","serial":1}`))
+	zoneOf(p, false, "5.0.10.in-addr.arpa", ptr("1.5.0.10.in-addr.arpa", "iot.example"))
+	// a /24 held beside zones of one address under it is what the server writes into: those are not the finding
+	zoneOf(p, false, "9.9.10.in-addr.arpa", ptr("3.9.9.10.in-addr.arpa", "a.example"))
+	zoneOf(p, false, "1.9.9.10.in-addr.arpa", ptr("1.9.9.10.in-addr.arpa", "b.example"))
+	zoneOf(p, false, "2.9.9.10.in-addr.arpa", ptr("2.9.9.10.in-addr.arpa", "c.example"))
+	suite := p.session(t, Options{})
+	found := auditFindings(t, suite, "audit_zones", map[string]any{"server": "dock", "problems": []string{"reverse_zone_per_address", "reverse_zone_empty"}})
+
+	want(t, found, "reverse_zone_per_address", "16.16.172.in-addr.arpa", "3 reverse zones each hold one address of 172.16.16.0/24 (162, 163, 170) and no zone holds the network")
+	want(t, found, "reverse_zone_empty", "170.16.16.172.in-addr.arpa", "the reverse zone 170.16.16.172.in-addr.arpa holds no PTR record")
+	none(t, found, "reverse_zone_empty", "5.0.10.in-addr.arpa")
+	none(t, found, "reverse_zone_per_address", "9.9.10.in-addr.arpa")
+	if len(found) != 2 {
+		t.Errorf("%d findings, want the two: %v", len(found), found)
+	}
+	if fix := found[slices.IndexFunc(found, func(f map[string]any) bool { return f["problem"] == "reverse_zone_per_address" })]["fix"]; !strings.HasPrefix(acctest.Str(fix), "make the zone 16.16.172.in-addr.arpa (zone_create)") {
+		t.Errorf("the fix = %q", fix)
+	}
+}
+
 func TestAuditSecurity(t *testing.T) {
 	t.Parallel()
 
@@ -711,5 +822,198 @@ func TestAuditSecurity(t *testing.T) {
 	both := auditFindings(t, suite, "audit_security", map[string]any{"problems": []string{"recursion_open", "console_plain"}})
 	if len(both) != 2 || both[0]["servers"] != nil || both[1]["servers"] != nil {
 		t.Errorf("what both leave open = %v", both)
+	}
+}
+
+func TestAuditCluster(t *testing.T) {
+	t.Parallel()
+
+	p := auditPair(t)
+	suite := p.session(t, Options{})
+	found := auditFindings(t, suite, "audit_cluster", nil)
+
+	want(t, found, "node_unreachable", "rpi.cluster.example", "dock cannot reach the node rpi.cluster.example of the cluster cluster.example, which it last heard from at 2020-01-01T00:00:00Z", "dock")
+	want(t, found, "node_not_configured", "ns3.cluster.example", "is not among the servers configured here")
+	want(t, found, "versions_differ", "cluster.example", "run different versions of the server: 15.5, 15.6")
+	want(t, found, "config_stale", "rpi.cluster.example", "rpi last fetched the primary's configuration at 2020-01-01T00:00:00Z, and is set to every 900 seconds", "rpi")
+	want(t, found, "nodes_disagree", "cluster.example", "dock list dock.cluster.example, ns3.cluster.example, rpi.cluster.example; rpi list dock.cluster.example, rpi.cluster.example")
+	none(t, found, "single_node", "cluster.example")
+	none(t, found, "outside_cluster", "cluster.example")
+	if len(found) != 5 {
+		t.Errorf("%d findings, want the five: %v", len(found), found)
+	}
+
+	// a cluster of one, and a server outside it
+	p.rpi.Answer("admin/cluster/state", `{"clusterInitialized":false,"dnsServerDomain":"rpi","version":"15.6"}`)
+	p.dock.Answer("admin/cluster/state", `{"clusterInitialized":true,"dnsServerDomain":"dock.cluster.example","version":"15.6","clusterDomain":"cluster.example","configRefreshIntervalSeconds":900,"clusterNodes":[`+nodeJSON(2, "dock", "Primary", "Self", "15.6")+`]}`)
+	found = auditFindings(t, suite, "audit_cluster", nil)
+	want(t, found, "single_node", "cluster.example", "has one node, its primary dock.cluster.example", "dock")
+	want(t, found, "outside_cluster", "cluster.example", "dock are in the cluster cluster.example and rpi in none", "rpi")
+	if len(found) != 2 {
+		t.Errorf("%d findings, want the two: %v", len(found), found)
+	}
+	p.dock.Answer("admin/cluster/state", `{"clusterInitialized":true,"dnsServerDomain":"dock.cluster.example","version":"15.6","clusterDomain":"cluster.example","configRefreshIntervalSeconds":900,"clusterNodes":[`+nodeJSON(2, "dock", "Secondary", "Self", "15.6")+`,`+nodeJSON(3, "rpi", "Primary", "Connected", "15.6")+`]}`)
+	p.rpi.Answer("admin/cluster/state", `{"clusterInitialized":true,"dnsServerDomain":"rpi.cluster.example","version":"15.6","clusterDomain":"cluster.example","clusterNodes":[`+nodeJSON(2, "dock", "Secondary", "Connected", "15.6")+`,`+nodeJSON(3, "rpi", "Primary", "Self", "15.6")+`]}`)
+	// a secondary that gives no time it last fetched has only just joined, and is not said to be behind
+	if found = auditFindings(t, suite, "audit_cluster", nil); len(found) != 0 {
+		t.Errorf("a secondary that has only just joined: %v", found)
+	}
+
+	// servers in no cluster have nothing to find; one that cannot say is said
+	p.both("admin/cluster/state", `{"clusterInitialized":false,"dnsServerDomain":"dock","version":"15.6"}`)
+	if found = auditFindings(t, suite, "audit_cluster", nil); len(found) != 0 {
+		t.Errorf("servers in no cluster: %v", found)
+	}
+	p.rpi.Fail("admin/cluster/state", "error", "Access was denied.")
+	if got := suite.Call(t, "audit_cluster", nil); len(acctest.Rows(t, got["findings"], "findings")) != 0 {
+		t.Errorf("a server that will not say how it stands = %v", got)
+	}
+}
+
+func TestAuditAccess(t *testing.T) {
+	t.Parallel()
+
+	p := auditPair(t)
+	suite := p.session(t, Options{})
+	out := suite.Call(t, "audit_access", nil)
+	found := acctest.Rows(t, out["findings"], "findings")
+
+	want(t, found, "admin_no_two_factor", "admin", "the administrator admin signs in with a password alone", "dock")
+	want(t, found, "account_never_used", "never", "has never signed in and has no token", "dock")
+	want(t, found, "disabled_with_tokens", "off", "is switched off and still has 1 API tokens", "dock")
+	want(t, found, "everyone_may_change", "Cache", "every account, whatever its groups, may modify in Cache", "dock")
+	// the account the server ships with, on beside another administrator
+	want(t, found, "stock_admin", "admin", "the account admin, which every server ships with and which whoever tries the console tries first, is switched on beside careful", "dock")
+	none(t, found, "admin_no_two_factor", "careful")
+	none(t, found, "everyone_may_change", "Zones")
+	if len(found) != 5 {
+		t.Errorf("%d findings, want the five: %v", len(found), found)
+	}
+	// what a server will not give is said beside the findings
+	if !strings.Contains(acctest.Str(out["note"]), "rpi would not give its accounts (admin/users/list: Access was denied.)") {
+		t.Errorf("note = %v", out["note"])
+	}
+}
+
+func TestAuditDNSSEC(t *testing.T) {
+	t.Parallel()
+
+	p := auditPair(t)
+	suite := p.session(t, Options{})
+	found := auditFindings(t, suite, "audit_dnssec", nil)
+
+	want(t, found, "nsec_walkable", "van.example.com", "lets anyone list every name the zone has", "dock")
+	want(t, found, "ds_wanted_at_parent", "van.example.com", "the key signing key 11 of van.example.com is ready and waits for its DS record", "dock")
+	want(t, found, "key_not_published", "van.example.com", "the ZoneSigningKey 33 of van.example.com was made on 2026-09-01T00:00:00Z and has never been put in the zone", "dock")
+	want(t, found, "key_never_replaced", "van.example.com", "the zone signing key 22 of van.example.com is in use and is never replaced", "dock")
+	want(t, found, "weak_algorithm", "van.example.com", "the ZoneSigningKey 44 of van.example.com signs with RSASHA1", "dock")
+	want(t, found, "signature_expired", "van.example.com", "1 signatures in van.example.com on dock are past their expiration, the oldest since 2020-01-01T00:00:00Z", "dock")
+	if len(found) != 6 {
+		t.Errorf("%d findings, want the six: %v", len(found), found)
+	}
+	// the zones were listed once, and the keys read once for the one that is signed
+	if len(p.dock.Requests("zones/list")) != 1 || len(p.dock.Requests("zones/dnssec/properties/get")) != 1 || len(p.rpi.Requests("zones/dnssec/properties/get")) != 0 {
+		t.Errorf("dock's zones were listed %d times and its keys read %d", len(p.dock.Requests("zones/list")), len(p.dock.Requests("zones/dnssec/properties/get")))
+	}
+
+	// keys that will not be read are said, and nothing is found there
+	p.dock.Fail("zones/dnssec/properties/get", "error", "Access was denied.")
+	// what the zone's own records say, the expired signature, is found all the same
+	if out := suite.Call(t, "audit_dnssec", nil); acctest.Num(t, out["total"], "total") != 1 || acctest.NumOr0(acctest.Object(t, out["counts"], "counts")["signature_expired"]) != 1 || !strings.Contains(acctest.Str(out["note"]), "dock would not give the keys of van.example.com") {
+		t.Errorf("keys that would not be read = %v", out)
+	}
+}
+
+func TestAuditQueries(t *testing.T) {
+	t.Parallel()
+
+	p := auditPair(t)
+	// dock sends what it does not know to four forwarders: one that answers at once, one that is not there, one that takes its time and one that fails
+	answered := func(took, result string) string {
+		return `{"result":{"Metadata":{"NameServer":"a forwarder","RoundTripTime":"` + took + `"},"RCODE":"` + result + `","Answer":[]}}`
+	}
+	p.dock.Answer("settings/get", `{"forwarders":["10.0.0.53","10.0.0.54","10.0.0.55","10.0.0.56"],"forwarderProtocol":"Tcp"}`)
+	p.dock.AnswerWhen("dnsClient/resolve", "server", "10.0.0.53", answered("12.5 ms", "NoError"))
+	p.dock.FailWhen("dnsClient/resolve", "server", "10.0.0.54", "error", "DnsClient failed to resolve the request '. NS IN': request timed out for name server [10.0.0.54].")
+	p.dock.AnswerWhen("dnsClient/resolve", "server", "10.0.0.55", answered("812.4 ms", "NoError"))
+	p.dock.AnswerWhen("dnsClient/resolve", "server", "10.0.0.56", answered("20 ms", "ServerFailure"))
+	suite := p.session(t, Options{})
+	found := auditFindings(t, suite, "audit_queries", nil)
+
+	// each forwarder is asked for the root's name servers, which every resolver knows, the way the server asks its forwarders
+	asked := p.dock.Requests("dnsClient/resolve")
+	if len(asked) != 4 || asked[0].Params.Get("domain") != "." || asked[0].Params.Get("type") != "NS" || asked[0].Params.Get("protocol") != "Tcp" || len(p.rpi.Requests("dnsClient/resolve")) != 0 {
+		t.Errorf("the forwarders were asked with %v", asked)
+	}
+	want(t, found, "forwarder_unanswering", "10.0.0.54", "the forwarder 10.0.0.54 gave the server no answer when it was asked for the root's name servers, which every resolver knows: dnsClient/resolve: DnsClient failed to resolve the request", "dock")
+	want(t, found, "forwarder_slow", "10.0.0.55", "the forwarder 10.0.0.55 took 812ms to answer the server", "dock")
+	want(t, found, "forwarder_failing", "10.0.0.56", "the forwarder 10.0.0.56 answered ServerFailure", "dock")
+	none(t, found, "forwarder_slow", "10.0.0.53")
+
+	// what is a server's own and at no name
+	own := func(problem, says, server string) {
+		t.Helper()
+		i := slices.IndexFunc(found, func(f map[string]any) bool { return f["problem"] == problem })
+		if i < 0 || !strings.Contains(acctest.Str(found[i]["detail"]), says) || !slices.Equal(acctest.Texts(found[i]["servers"]), []string{server}) || found[i]["fix"] == nil {
+			t.Errorf("%s on %s saying %q is not among %v", problem, server, says, found)
+		}
+	}
+	own("not_resolving", "could not resolve a name for itself just now: dnsClient/healthCheck: DNS Server failed to resolve the request.", "rpi")
+	own("no_query_log", "no app on the server keeps a log of queries", "rpi")
+	own("failing", "200 of the last day's 2000 queries were answered with a server failure, 10 in every hundred", "dock")
+	want(t, found, "one_client", "10.0.0.50", "10.0.0.50 (busy.van.example.com) asked 1500 of the last day's 2000 queries, 75 in every hundred", "dock")
+	// a name asked for often that is under a zone the servers hold; one asked for twice and one under nobody's zone are not said
+	want(t, found, "name_not_found", "nothing.van.example.com", "nothing.van.example.com was asked for 6 times in the last day and does not exist in van.example.com")
+	none(t, found, "name_not_found", "rare.example.com")
+	none(t, found, "name_not_found", "elsewhere.example.net")
+	// a busy client with no name, and not a quiet one; a name of the servers' own asked for far beyond its TTL, and not one asked for little or one that is not theirs
+	want(t, found, "client_unnamed", "10.0.0.51", "10.0.0.51 asked 1000 queries in the last day and has no name", "dock")
+	none(t, found, "client_unnamed", "10.0.0.52")
+	want(t, found, "client_not_caching", "emby.van.example.com", "emby.van.example.com was asked for 1200 times in the last day, where its TTL of 3600 seconds lets a client that caches ask 24 times", "dock")
+	none(t, found, "client_not_caching", "dock.van.example.com")
+	none(t, found, "client_not_caching", "www.example.org")
+	if len(found) != 10 {
+		t.Errorf("%d findings, want the ten: %v", len(found), found)
+	}
+	if asked := p.dock.Last("logs/query"); asked.Params.Get("rcode") != "NxDomain" || asked.Params.Get("entriesPerPage") != "2000" || asked.Params.Get("start") == "" {
+		t.Errorf("the log was asked with %v", asked.Params)
+	}
+
+	// one zone's: the name asked for that is not there, and the one asked for too often
+	if got := auditFindings(t, suite, "audit_queries", map[string]any{"zone": "van.example.com"}); len(got) != 2 || got[0]["problem"] != "client_not_caching" || got[1]["problem"] != "name_not_found" {
+		t.Errorf("one zone's = %v", got)
+	}
+}
+
+func TestAuditApps(t *testing.T) {
+	t.Parallel()
+
+	p := auditPair(t)
+	suite := p.session(t, Options{})
+	found := auditFindings(t, suite, "audit_apps", nil)
+
+	want(t, found, "app_update", "Split Horizon", "the app Split Horizon is installed at version 1.0 and the store has 1.1", "dock")
+	want(t, found, "app_only_on", "Split Horizon", "the app Split Horizon is installed on dock and not on rpi", "dock")
+	want(t, found, "app_only_on", "Query Logs (Sqlite)", "is installed on dock and not on rpi", "dock")
+	if len(found) != 3 {
+		t.Errorf("%d findings, want the three: %v", len(found), found)
+	}
+
+	// both run it, a version apart and configured differently; a store that cannot be asked says nothing is behind
+	p.rpi.Answer("apps/list", `{"apps":[`+appJSON("Query Logs (Sqlite)", "7", true)+`,`+appJSON("Split Horizon", "1.0", false)+`]}`)
+	p.rpi.Answer("apps/config/get", `{"config":"{\"enableLogging\":true,\"maxLogDays\":30}"}`)
+	found = auditFindings(t, suite, "audit_apps", nil)
+	want(t, found, "app_versions_differ", "Query Logs (Sqlite)", "dock has 8, rpi has 7")
+	want(t, found, "app_config_differs", "Query Logs (Sqlite)", "is not configured alike on every server")
+	want(t, found, "app_config_differs", "Split Horizon", "is not configured alike on every server")
+	want(t, found, "app_update", "Split Horizon", "the store has 1.1", "dock")
+	none(t, found, "app_only_on", "Split Horizon")
+	if len(found) != 4 {
+		t.Errorf("%d findings, want the four: %v", len(found), found)
+	}
+
+	// one server has nobody to differ from
+	if alone := auditFindings(t, suite, "audit_apps", map[string]any{"server": "rpi"}); len(alone) != 0 {
+		t.Errorf("rpi alone, which cannot ask the store = %v", alone)
 	}
 }

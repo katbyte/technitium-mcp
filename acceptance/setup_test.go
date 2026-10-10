@@ -334,6 +334,15 @@ func TestZoneChanges(t *testing.T) {
 		t.Errorf("a copy's SOA changed = %q", msg)
 	}
 
+	// the copy has had its first transfer before anything more is asked of it: a resync asked for while a transfer is under way is not another transfer
+	if !acctest.EventuallyWithin(time.Minute, func() bool {
+		mine, theirs := holds(first), holds(second)
+
+		return mine != nil && theirs != nil && theirs.SOASerial == mine.SOASerial && !theirs.SyncFailed
+	}) {
+		t.Fatalf("%s's copy of %s never caught up with %s: %+v", world.Second, madeZone, world.First, holds(second))
+	}
+
 	// a record added on the first, and the copy resynced: it has the record
 	suite.Call(t, "record_set", on(map[string]any{"name": "late." + madeZone, "type": "A", "value": "10.4.4.9"}))
 	dry = suite.Call(t, "zone_resync", map[string]any{"server": world.Second, "zone": madeZone, "dry_run": true})

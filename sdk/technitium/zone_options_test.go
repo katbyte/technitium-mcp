@@ -25,7 +25,7 @@ func TestZoneOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if asked := fake.Last("zones/options/get"); len(asked.Params) != 1 || asked.Params.Get("zone") != "example.com" {
+	if asked := fake.Last("zones/options/get"); len(asked.Params) != 3 || asked.Params.Get("zone") != "example.com" || asked.Params.Get("includeAvailableCatalogZoneNames") != "true" || asked.Params.Get("includeAvailableTsigKeyNames") != "true" {
 		t.Errorf("the options were asked for with %v", asked.Params)
 	}
 	if got.Name != "example.com" || got.Type != "Primary" || got.Disabled || got.Catalog != "catalog1" || got.DNSSECStatus != "Unsigned" || got.QueryAccess != "Allow" || got.ZoneTransfer != "AllowOnlyZoneNameServers" || len(got.ZoneTransferNetworkACL) != 1 || len(got.ZoneTransferTSIGKeyNames) != 1 || got.Notify != "ZoneNameServers" || !got.NotifyFailed || len(got.NotifyFailedFor) != 1 || got.Update != "UseSpecifiedNetworkACL" || len(got.UpdateNetworkACL) != 1 {

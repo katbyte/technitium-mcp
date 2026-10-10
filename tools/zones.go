@@ -121,8 +121,10 @@ func zoneDiffers(on []zoneOn) []string {
 // it is, what it says and how it is served.
 type recordKey struct {
 	name, recordType, value, comment string
-	ttl, expiry                      int
-	disabled                         bool
+	// options is what the record has beside its value, written as one line
+	options     string
+	ttl, expiry int
+	disabled    bool
 }
 
 // recordSeen is one server's own facts about a record it holds.
@@ -134,15 +136,34 @@ type recordSeen struct {
 
 // recordRow is one record, and which of the servers read hold it so.
 type recordRow struct {
-	Name     string       `json:"name"`
-	Type     string       `json:"type"`
-	TTL      int          `json:"ttl"                  jsonschema:"seconds"`
-	Value    string       `json:"value"                jsonschema:"the record's data as a zone file writes it: an address, a name, or for an MX its preference then its exchange"`
-	Comment  string       `json:"comment,omitempty"`
-	Disabled bool         `json:"disabled,omitempty"`
-	Expiry   int          `json:"expiry_ttl,omitempty" jsonschema:"seconds after its last change at which the server deletes the record by itself"`
-	OnlyOn   []string     `json:"only_on,omitempty"    jsonschema:"the servers holding this record exactly so, when not every server read does: a record on one server and not another, or held with another TTL or comment, shows as rows that differ here"`
-	On       []recordSeen `json:"on,omitempty"         jsonschema:"each server's own facts about the record; only with details"`
+	Name     string            `json:"name"`
+	Type     string            `json:"type"`
+	TTL      int               `json:"ttl"                  jsonschema:"seconds"`
+	Value    string            `json:"value"                jsonschema:"the record's data as a zone file writes it: an address, a name, or for an MX its preference then its exchange"`
+	Comment  string            `json:"comment,omitempty"`
+	Disabled bool              `json:"disabled,omitempty"`
+	Expiry   int               `json:"expiry_ttl,omitempty" jsonschema:"seconds after its last change at which the server deletes the record by itself"`
+	Options  map[string]string `json:"options,omitempty"    jsonschema:"what the record has beside its value, by the API's names for them: an NS record's glue, how a FWD record's name server is reached, what an APP record tells its app (recordData)"`
+	OnlyOn   []string          `json:"only_on,omitempty"    jsonschema:"the servers holding this record exactly so, when not every server read does: a record on one server and not another, or held with another TTL or comment, shows as rows that differ here"`
+	On       []recordSeen      `json:"on,omitempty"         jsonschema:"each server's own facts about the record; only with details"`
+}
+
+// optionsOf is what a record has beside its value, as a row gives it: only
+// what is set to something. An option that is off, a forwarder with no
+// priority of its own and one that goes through the server's own proxy are
+// what every record has, and say nothing.
+func optionsOf(rec *technitium.Record) map[string]string {
+	set := rec.Options()
+	for option, value := range set {
+		if value == "false" || (option == "forwarderPriority" && value == "0") || (option == "proxyType" && value == "DefaultProxy") {
+			delete(set, option)
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+
+	return set
 }
 
 // typeCount is how many records of one type matched.
@@ -469,13 +490,14 @@ func mergeRecords(held []zoneCopy, filter recordFilter, details bool) (out []mer
 			if !filter.keeps(rec) {
 				continue
 			}
-			key := recordKey{name: strings.ToLower(rec.Name), recordType: rec.Type, value: rec.Value(), comment: rec.Comments, ttl: rec.TTL, expiry: rec.ExpiryTTL, disabled: rec.Disabled}
+			set := optionsOf(rec)
+			key := recordKey{name: strings.ToLower(rec.Name), recordType: rec.Type, value: rec.Value(), comment: rec.Comments, ttl: rec.TTL, expiry: rec.ExpiryTTL, disabled: rec.Disabled, options: fmt.Sprint(set)}
 			if len(copies) > 0 {
 				key.comment, key.expiry = "", 0
 			}
 			row := rows[key]
 			if row == nil {
-				row = &merged{Name: rec.Name, Type: rec.Type, TTL: rec.TTL, Value: key.value, Disabled: rec.Disabled, record: rec}
+				row = &merged{Name: rec.Name, Type: rec.Type, TTL: rec.TTL, Value: key.value, Disabled: rec.Disabled, Options: set, record: rec}
 				rows[key] = row
 			}
 			if row.Comment == "" {

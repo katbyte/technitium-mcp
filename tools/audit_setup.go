@@ -3,7 +3,9 @@ package tools
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +24,8 @@ type setupRead struct {
 	// options are each zone's, by the zone's name; a zone whose options
 	// would not be read has none
 	options map[string]*technitium.ZoneOptions
+	// cluster is how the server stands in a cluster, nil when it would not say
+	cluster *technitium.Cluster
 
 	// read for the audit of what is left open; nil or empty for what would
 	// not be read, which unread says
@@ -45,6 +49,10 @@ func (a *audited) readSetup(ctx context.Context, picked []*servers.Server, secur
 			return setupRead{}, err
 		}
 		out.name, out.defaultPassword = cleanName(status.Server), status.HasDefaultCredentials
+		// how the server stands in a cluster names the cluster's other nodes, which are servers too, read here or not
+		if state, err := srv.Client.ClusterState(ctx); err == nil {
+			out.cluster = state
+		}
 		for _, zone := range a.inv.zones {
 			for i := range zone.copies {
 				if zone.copies[i].server != srv.Name {
@@ -80,6 +88,7 @@ func (a *audited) readSetup(ctx context.Context, picked []*servers.Server, secur
 			a.setupFailed = append(a.setupFailed, serverFailure{Server: answer.Server.Name, Error: answer.Err.Error()})
 		default:
 			a.setup[answer.Server.Name] = &answer.Value
+			a.knows(answer.Value.cluster)
 		}
 	}
 }
@@ -111,8 +120,11 @@ func apex(c *zoneCopy, zone string) (nameServers []string, primary string) {
 // not give its copies the zone or tell them it changed.
 func auditZones(a *audited) []finding {
 	var found []finding
-	// every server asked by its own name
+	// every server asked by its own name, and every node of their cluster by its: a node that could not be read is a server all the same
 	names := map[string]string{}
+	for _, node := range a.nodeNames {
+		names[node] = node
+	}
 	for server, setup := range a.setup {
 		names[setup.name] = server
 	}
@@ -168,6 +180,82 @@ func auditZones(a *audited) []finding {
 				found = append(found, finding{Problem: "notify_none", Zone: zone.name, Name: zone.name, Servers: []string{p.server}, Detail: fmt.Sprintf("%s tells nobody when %s changes, and %s holds a copy of it: the copy learns of a change only when it next checks, which its refresh time sets", p.server, zone.name, strings.Join(holders, ", ")), Fix: "have the zone notify its name servers, or the copies by address, in the zone's options on " + p.server})
 			}
 		}
+	}
+
+	return append(found, reverseZoneShapes(a)...)
+}
+
+// reverseZoneShapes finds reverse zones that are the wrong shape: one made
+// for a single address, which the server makes one of per machine when a
+// scope's network is smaller than a /24 and no zone covers it, and one that
+// holds no PTR record at all.
+func reverseZoneShapes(a *audited) []finding {
+	type under struct {
+		singles []string
+		whole   bool
+	}
+	var found []finding
+	parents := map[string]*under{}
+	for _, zone := range a.inv.zones {
+		name := cleanName(zone.name)
+		labels, reverse := strings.CutSuffix(name, ".in-addr.arpa")
+		if !reverse {
+			continue
+		}
+		var holders []string
+		ptrs, catalog := 0, false
+		for i := range zone.copies {
+			c := &zone.copies[i]
+			holders = append(holders, c.server)
+			catalog = catalog || strings.Contains(c.zone.Type, "Catalog")
+			for r := range c.records {
+				if c.records[r].Type == "PTR" {
+					ptrs++
+				}
+			}
+		}
+		if catalog {
+			continue
+		}
+		on := holders
+		if len(holders) == len(a.views) {
+			on = nil
+		}
+		octets := strings.Split(labels, ".")
+		switch len(octets) {
+		case 4:
+			parent := strings.Join(octets[1:], ".") + ".in-addr.arpa"
+			if parents[parent] == nil {
+				parents[parent] = &under{}
+			}
+			parents[parent].singles = append(parents[parent].singles, octets[0])
+		case 3:
+			if parents[name] == nil {
+				parents[name] = &under{}
+			}
+			parents[name].whole = true
+		default:
+		}
+		if ptrs == 0 {
+			found = append(found, finding{Problem: "reverse_zone_empty", Zone: name, Name: name, Servers: on, Detail: fmt.Sprintf("the reverse zone %s holds no PTR record: it answers that no address in it has a name, where without it the servers would ask elsewhere", name), Fix: "delete it (zone_delete) unless PTRs are about to be put in it"})
+		}
+	}
+
+	for _, parent := range slices.Sorted(maps.Keys(parents)) {
+		p := parents[parent]
+		if len(p.singles) < 2 || p.whole {
+			continue
+		}
+		slices.SortFunc(p.singles, func(x, y string) int {
+			a, _ := strconv.Atoi(x)
+			b, _ := strconv.Atoi(y)
+
+			return a - b
+		})
+		octets := strings.Split(strings.TrimSuffix(parent, ".in-addr.arpa"), ".")
+		slices.Reverse(octets)
+		network := strings.Join(octets, ".") + ".0/24"
+		found = append(found, finding{Problem: "reverse_zone_per_address", Zone: parent, Name: parent, Detail: fmt.Sprintf("%d reverse zones each hold one address of %s (%s) and no zone holds the network: the server makes one zone per machine when a DHCP scope's network is smaller than a /24 and nothing covers it", len(p.singles), network, strings.Join(p.singles, ", ")), Fix: fmt.Sprintf("make the zone %s (zone_create), put the PTRs in it (record_set) and delete the small zones (zone_delete): the server writes a PTR into whichever zone covers the address", parent)})
 	}
 
 	return found

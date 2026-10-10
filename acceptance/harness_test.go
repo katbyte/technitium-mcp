@@ -50,7 +50,7 @@ var ownZones = []string{firstZone, reverseZone, writeReverseZone, dhcpZone, setu
 // leftZones are the zones the tests of the changes make and delete again:
 // taken away with the rest when a run starts and when it ends, on whichever
 // server has them and as whatever type.
-var leftZones = []string{madeZone}
+var leftZones = []string{madeZone, sourceZone, cloneZone, signedZone, hostZone, hostReverse, messZone, messReverse, lifeZone, lifeClone, restoredZone, busyZone, bothZone, kindsZone, kindsForward, keyedZone, importZone}
 
 // fixture is a record a server is given in the shared zone.
 type fixture struct {
@@ -111,6 +111,7 @@ func runSuite(m *testing.M) int {
 	}
 
 	code := m.Run()
+	removeBinary()
 	if err := removeFixtures(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "acceptance teardown:", err)
 		code = 1
@@ -159,9 +160,18 @@ func start(ctx context.Context) error {
 	}
 	connected.NotReady = suite.NotReady
 	suite = connected
+	suite.CannotAnswer = map[string]string{}
 	if alone() {
 		// a copy needs a primary to be a copy of, and one server has no other
-		suite.CannotAnswer = map[string]string{"zone_resync": "one server has no other to hold a copy of a zone from"}
+		suite.CannotAnswer["zone_resync"] = "one server has no other to hold a copy of a zone from"
+	}
+	if clustered() {
+		// a node of a cluster is in it already, and the run that takes the cluster apart is where one joins
+		suite.CannotAnswer["cluster_join"] = "both servers are in the cluster already: the run that ends the suite has one join"
+	} else {
+		for _, tool := range []string{"cluster_edit", "cluster_node_delete", "cluster_leave", "cluster_promote", "cluster_delete"} {
+			suite.CannotAnswer[tool] = "the servers are in no cluster: the cluster topology calls it"
+		}
 	}
 
 	return nil
@@ -417,4 +427,17 @@ func rowFor(t *testing.T, rows []map[string]any, key, want string) map[string]an
 	t.Fatalf("no row with %s %q in %v", key, want, rows)
 
 	return nil
+}
+
+// mustClient is the client for one of the servers by name, for the checks a
+// test makes of a server itself rather than through a tool.
+func mustClient(t *testing.T, name string) *technitium.Client {
+	t.Helper()
+
+	c, err := world.Client(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return c
 }

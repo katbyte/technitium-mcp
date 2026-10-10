@@ -144,7 +144,7 @@ func TestWhatEmptiesTheCache(t *testing.T) {
 		blockingSettled(ctx, t)
 	})
 	step("making a scope", false, func() error {
-		return c.SetScope(t.Context(), technitium.NewScope{Name: "sdk-emptier", StartingAddress: "10.78.0.10", EndingAddress: "10.78.0.20", SubnetMask: "255.255.255.0"})
+		return c.SetScope(t.Context(), &technitium.NewScope{Name: "sdk-emptier", StartingAddress: "10.78.0.10", EndingAddress: "10.78.0.20", SubnetMask: "255.255.255.0"})
 	})
 	step("switching a scope off", false, func() error { return c.DisableScope(t.Context(), "sdk-emptier") })
 	step("switching a scope on", false, func() error { return c.EnableScope(t.Context(), "sdk-emptier") })

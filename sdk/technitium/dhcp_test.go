@@ -48,7 +48,7 @@ func TestDHCP(t *testing.T) {
 		t.Errorf("Leases = %+v, %v", leases, err)
 	}
 
-	if err := c.SetScope(t.Context(), technitium.NewScope{Name: "LAN", StartingAddress: "10.44.0.10", EndingAddress: "10.44.0.200", SubnetMask: "255.255.255.0", DomainName: "lan.test", DNSUpdates: new(true), RouterAddress: "10.44.0.1", DNSServers: []string{"10.44.0.2", "10.44.0.3"}, LeaseTimeDays: 1, Exclusions: [][2]string{{"10.44.0.10", "10.44.0.20"}, {"10.44.0.190", "10.44.0.200"}}}); err != nil {
+	if err := c.SetScope(t.Context(), &technitium.NewScope{Name: "LAN", StartingAddress: "10.44.0.10", EndingAddress: "10.44.0.200", SubnetMask: "255.255.255.0", DomainName: "lan.test", DNSUpdates: new(true), RouterAddress: "10.44.0.1", DNSServers: []string{"10.44.0.2", "10.44.0.3"}, LeaseTimeDays: 1, Exclusions: [][2]string{{"10.44.0.10", "10.44.0.20"}, {"10.44.0.190", "10.44.0.200"}}}); err != nil {
 		t.Fatal(err)
 	}
 	asked := fake.Last("dhcp/scopes/set")
@@ -87,7 +87,7 @@ func TestDHCP(t *testing.T) {
 	}
 
 	// a lease time to the minute is sent as its days, hours and minutes, and what is switched off is said to be
-	if err := c.SetScope(t.Context(), technitium.NewScope{Name: "LAN", StartingAddress: "10.44.0.10", EndingAddress: "10.44.0.200", SubnetMask: "255.255.255.0", LeaseTime: 36*time.Hour + 30*time.Minute, DNSUpdates: new(false), UseThisDNSServer: new(true), AllowOnlyReservedLeases: new(false)}); err != nil {
+	if err := c.SetScope(t.Context(), &technitium.NewScope{Name: "LAN", StartingAddress: "10.44.0.10", EndingAddress: "10.44.0.200", SubnetMask: "255.255.255.0", LeaseTime: 36*time.Hour + 30*time.Minute, DNSUpdates: new(false), UseThisDNSServer: new(true), AllowOnlyReservedLeases: new(false)}); err != nil {
 		t.Fatal(err)
 	}
 	timed := fake.Last("dhcp/scopes/set")
@@ -116,7 +116,7 @@ func TestDHCP(t *testing.T) {
 	if _, err := c.Scope(t.Context(), ""); err == nil {
 		t.Error("a scope with no name was read")
 	}
-	if err := c.SetScope(t.Context(), technitium.NewScope{Name: "LAN"}); err == nil {
+	if err := c.SetScope(t.Context(), &technitium.NewScope{Name: "LAN"}); err == nil {
 		t.Error("a scope with no range was set")
 	}
 	if err := c.DeleteScope(t.Context(), ""); err == nil {

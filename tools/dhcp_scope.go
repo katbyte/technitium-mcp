@@ -65,9 +65,117 @@ func shared(a, b *dhcpScope) []span {
 	return out
 }
 
+// scopeMoreIn is the rest of what a scope can be set to hand out, and of how
+// it leases: each left out keeps what the scope has, and a list given empty
+// clears it.
+type scopeMoreIn struct {
+	NewName        string           `json:"new_name,omitempty"           jsonschema:"rename the scope"`
+	DNSTTL         *int             `json:"dns_ttl,omitempty"            jsonschema:"the TTL of the records the scope writes for its leases, in seconds"`
+	DNSOverwrite   *bool            `json:"dns_overwrite,omitempty"      jsonschema:"let a lease write over an address record made by hand at the machine's name"`
+	DomainSearch   *[]string        `json:"domain_search,omitempty"      jsonschema:"the domains machines are told to try a short name under, in order"`
+	NTPServers     *[]string        `json:"ntp_servers,omitempty"        jsonschema:"the time servers machines are told of, by address"`
+	NTPServerNames *[]string        `json:"ntp_server_names,omitempty"   jsonschema:"time servers by name, as pool.ntp.org, which the server resolves and hands out as addresses"`
+	WINSServers    *[]string        `json:"wins_servers,omitempty"`
+	StaticRoutes   *[]string        `json:"static_routes,omitempty"      jsonschema:"routes to other networks, each as the network and the router that reaches it: 198.51.100.0/24 via 192.0.2.2"`
+	BootServer     *string          `json:"boot_server,omitempty"        jsonschema:"for machines that start from the network: the address of the server they fetch from"`
+	BootServerName *string          `json:"boot_server_name,omitempty"   jsonschema:"that server's name"`
+	BootFile       *string          `json:"boot_file,omitempty"          jsonschema:"the file they fetch"`
+	TFTPServers    *[]string        `json:"tftp_servers,omitempty"       jsonschema:"the servers phones and the like fetch their configuration from (option 150)"`
+	CAPWAP         *[]string        `json:"capwap_controllers,omitempty" jsonschema:"the controllers wireless access points are told to find (option 138)"`
+	VendorInfo     *[]vendorOption  `json:"vendor_info,omitempty"        jsonschema:"what the machines of one vendor are told, in place of what the scope has"`
+	GenericOptions *[]genericOption `json:"generic_options,omitempty"    jsonschema:"any other DHCP option, by its number, in place of the ones the scope has"`
+	OfferDelayMS   *int             `json:"offer_delay_ms,omitempty"     jsonschema:"how long the scope waits before it offers an address, in milliseconds"`
+	PingCheck      *bool            `json:"ping_check,omitempty"         jsonschema:"ping an address before leasing it, and leave alone one that answers"`
+	PingTimeoutMS  *int             `json:"ping_timeout_ms,omitempty"`
+	PingRetries    *int             `json:"ping_retries,omitempty"`
+	BlockLocalMAC  *bool            `json:"block_local_mac,omitempty"    jsonschema:"lease to no machine with a made-up hardware address"`
+	IgnoreClientID *bool            `json:"ignore_client_id,omitempty"   jsonschema:"tell machines apart by hardware address alone, whatever identifier one sends. Changing it can give machines another address when they next renew"`
+}
+
+// routeOf reads a route written as 198.51.100.0/24 via 192.0.2.2.
+func routeOf(text string) (technitium.StaticRoute, bool) {
+	to, via, found := strings.Cut(strings.TrimSpace(text), " via ")
+	network, err := netip.ParsePrefix(strings.TrimSpace(to))
+	router, isAddr := ipv4(via)
+	if !found || err != nil || !network.Addr().Is4() || !isAddr {
+		return technitium.StaticRoute{}, false
+	}
+
+	return technitium.StaticRoute{Destination: network.Masked().Addr().String(), SubnetMask: address(^uint32(0) << (32 - network.Bits())).String(), Router: router.String()}, true
+}
+
+// apply puts what was given into the scope to set, and says whether any of
+// it is other than what the scope has; have is nil for a scope being made.
+func (in *scopeMoreIn) apply(want *technitium.NewScope, have *technitium.ScopeDetails) (differs bool, err error) {
+	if have == nil {
+		have = &technitium.ScopeDetails{}
+	}
+	want.OfferDelayTime, want.PingCheckTimeout, want.PingCheckRetries, want.DNSTTL = in.OfferDelayMS, in.PingTimeoutMS, in.PingRetries, in.DNSTTL
+	want.PingCheckEnabled, want.DNSOverwriteForDynamicLease, want.BlockLocallyAdministeredMACAddresses, want.IgnoreClientIdentifierOption = in.PingCheck, in.DNSOverwrite, in.BlockLocalMAC, in.IgnoreClientID
+	want.ServerAddress, want.ServerHostName, want.BootFileName = in.BootServer, in.BootServerName, in.BootFile
+	want.DomainSearchList, want.WINSServers, want.NTPServers, want.NTPServerDomainNames, want.CAPWAPAddresses, want.TFTPServerAddresses = given(in.DomainSearch), given(in.WINSServers), given(in.NTPServers), given(in.NTPServerNames), given(in.CAPWAP), given(in.TFTPServers)
+	for what, list := range map[string][]string{"wins_servers": want.WINSServers, "ntp_servers": want.NTPServers, "capwap_controllers": want.CAPWAPAddresses, "tftp_servers": want.TFTPServerAddresses} {
+		for _, text := range list {
+			if _, ok := parseAddr(text); !ok {
+				return false, fmt.Errorf("%s: %q is not an address. Nothing was changed", what, text)
+			}
+		}
+	}
+	if in.BootServer != nil && *in.BootServer != "" {
+		if _, ok := parseAddr(*in.BootServer); !ok {
+			return false, fmt.Errorf("boot_server %q is not an address: its name goes in boot_server_name. Nothing was changed", *in.BootServer)
+		}
+	}
+	if in.StaticRoutes != nil {
+		want.StaticRoutes = []technitium.StaticRoute{}
+		for _, text := range given(in.StaticRoutes) {
+			route, ok := routeOf(text)
+			if !ok {
+				return false, fmt.Errorf("the route %q is not one: give the network and the router that reaches it, as 198.51.100.0/24 via 192.0.2.2. Nothing was changed", text)
+			}
+			want.StaticRoutes = append(want.StaticRoutes, route)
+		}
+	}
+	if in.VendorInfo != nil {
+		want.VendorInfo = []technitium.VendorInfo{}
+		for _, v := range *in.VendorInfo {
+			want.VendorInfo = append(want.VendorInfo, technitium.VendorInfo{Identifier: strings.TrimSpace(v.Identifier), Information: strings.TrimSpace(v.Information)})
+		}
+	}
+	if in.GenericOptions != nil {
+		want.GenericOptions = []technitium.GenericOption{}
+		for _, o := range *in.GenericOptions {
+			if o.Code < 1 || o.Code > 254 {
+				return false, fmt.Errorf("a DHCP option's number is 1 to 254, and %d was given. Nothing was changed", o.Code)
+			}
+			want.GenericOptions = append(want.GenericOptions, technitium.GenericOption{Code: o.Code, Value: strings.TrimSpace(o.Value)})
+		}
+	}
+
+	// against what the scope has
+	for given, has := range map[*int]int{in.OfferDelayMS: have.OfferDelayTime, in.PingTimeoutMS: have.PingCheckTimeout, in.PingRetries: have.PingCheckRetries, in.DNSTTL: have.DNSTTL} {
+		differs = differs || (given != nil && *given != has)
+	}
+	for given, has := range map[*bool]bool{in.PingCheck: have.PingCheckEnabled, in.DNSOverwrite: have.DNSOverwriteForDynamicLease, in.BlockLocalMAC: have.BlockLocallyAdministeredMACAddresses, in.IgnoreClientID: have.IgnoreClientIdentifierOption} {
+		differs = differs || (given != nil && *given != has)
+	}
+	for given, has := range map[*string]string{in.BootServer: have.ServerAddress, in.BootServerName: have.ServerHostName, in.BootFile: have.BootFileName} {
+		differs = differs || (given != nil && *given != has)
+	}
+	for _, lists := range [][2][]string{{want.DomainSearchList, have.DomainSearchList}, {want.WINSServers, have.WINSServers}, {want.NTPServers, have.NTPServers}, {want.NTPServerDomainNames, have.NTPServerDomainNames}, {want.CAPWAPAddresses, have.CAPWAPAddresses}, {want.TFTPServerAddresses, have.TFTPServerAddresses}} {
+		differs = differs || (lists[0] != nil && !slices.Equal(lists[0], lists[1]) && len(lists[0])+len(lists[1]) > 0)
+	}
+	differs = differs || (want.StaticRoutes != nil && !slices.Equal(want.StaticRoutes, have.StaticRoutes) && len(want.StaticRoutes)+len(have.StaticRoutes) > 0)
+	differs = differs || (want.VendorInfo != nil && !slices.Equal(want.VendorInfo, have.VendorInfo) && len(want.VendorInfo)+len(have.VendorInfo) > 0)
+	differs = differs || (want.GenericOptions != nil && !slices.Equal(want.GenericOptions, have.GenericOptions) && len(want.GenericOptions)+len(have.GenericOptions) > 0)
+
+	return differs, nil
+}
+
 func registerDHCPScopeTools(r *registry) {
 	type dhcpScopeSetIn struct {
 		dhcpServerArg
+		scopeMoreIn
 
 		Scope            string    `json:"scope"                         jsonschema:"the scope's name: one that is there is changed, and any other is made"`
 		First            string    `json:"first,omitempty"               jsonschema:"the first address it leases from; needed, with last and mask, to make a scope"`
@@ -188,6 +296,25 @@ func registerDHCPScopeTools(r *registry) {
 			want.DomainName = cleanName(*in.Domain)
 		}
 		want.DNSUpdates, want.UseThisDNSServer, want.AllowOnlyReservedLeases = in.DNSUpdates, in.UseThisDNSServer, in.OnlyReserved
+		var has *technitium.ScopeDetails
+		if existing != nil {
+			has = existing.details
+		}
+		more, err := in.apply(&want, has)
+		if err != nil {
+			return nil, dhcpScopeSetOut{}, err
+		}
+		renamed := strings.TrimSpace(in.NewName)
+		switch {
+		case renamed == "" || strings.EqualFold(renamed, name):
+			renamed = ""
+		case existing == nil:
+			return nil, dhcpScopeSetOut{}, fmt.Errorf("%s has no scope named %s to rename: a scope is made under the name it is to have", srv.Name, name)
+		case held.scope(renamed) != nil:
+			return nil, dhcpScopeSetOut{}, fmt.Errorf("%s has a scope named %s already. Nothing was changed", srv.Name, held.scope(renamed).listed.Name)
+		default:
+			want.NewName = renamed
+		}
 
 		// the scope as it would be, to hold against the others
 		on := wasOn
@@ -236,8 +363,11 @@ func registerDHCPScopeTools(r *registry) {
 			}
 			same := want.StartingAddress == existing.listed.StartingAddress && want.EndingAddress == existing.listed.EndingAddress && want.SubnetMask == existing.listed.SubnetMask && (in.Exclusions == nil || slices.Equal(exclusions, had)) && (in.Router == nil || want.RouterAddress == d.RouterAddress) && (in.DNSServers == nil || slices.Equal(want.DNSServers, d.DNSServers)) && (in.Domain == nil || want.DomainName == cleanName(d.DomainName))
 			same = same && (want.LeaseTime == 0 || want.LeaseTime == time.Duration(d.LeaseTimeDays*24*60+d.LeaseTimeHours*60+d.LeaseTimeMinutes)*time.Minute) && (in.DNSUpdates == nil || *in.DNSUpdates == d.DNSUpdates) && (in.UseThisDNSServer == nil || *in.UseThisDNSServer == d.UseThisDNSServer) && (in.OnlyReserved == nil || *in.OnlyReserved == d.AllowOnlyReservedLeases)
-			if !same {
+			if !same || more {
 				done.did("set the scope %s on %s as asked: it leases %s-%s in %s", name, srv.Name, first, last, network)
+			}
+			if renamed != "" {
+				done.did("renamed the scope %s to %s", name, renamed)
 			}
 		}
 		set := len(done.said) > 0
@@ -246,9 +376,13 @@ func registerDHCPScopeTools(r *registry) {
 			want.Exclusions = exclusions
 		}
 		if set && !in.DryRun {
-			if err := srv.Client.SetScope(ctx, want); err != nil {
+			if err := srv.Client.SetScope(ctx, &want); err != nil {
 				return nil, dhcpScopeSetOut{}, fmt.Errorf("setting the scope %s: %w. Nothing was changed", name, err)
 			}
+		}
+		// from here on the scope is known by its new name
+		if renamed != "" {
+			name, out.Scope = renamed, renamed
 		}
 		// the server switches a scope on as it makes it
 		switch nowOn := wasOn || (existing == nil && set); {

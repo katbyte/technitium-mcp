@@ -103,6 +103,10 @@ func (w *World) Address(name string) string {
 // Names are the servers' names, the first first.
 func (w *World) Names() []string { return w.Set.Names() }
 
+// Password is the administrator's password on the servers
+// scripts/testenv.sh started, which signing in to one takes.
+func (*World) Password() string { return environment.Get("TEST_PASSWORD") }
+
 // Client is the client for one of the servers by name.
 func (w *World) Client(name string) (*technitium.Client, error) {
 	srv, err := w.Set.One(name)
@@ -345,14 +349,24 @@ func formCluster(ctx context.Context, set *servers.Set) (*servers.Set, error) {
 	if err != nil {
 		return nil, err
 	}
-	join := technitium.ClusterJoin{Addresses: []string{addresses[NS2]}, PrimaryURL: primary.Primary().URL, PrimaryAddress: addresses[NS1], IgnoreCertificateErrors: true, Username: "admin", Password: password}
+	if err := joinNode(ctx, joining.Client, second, NS2, technitium.ClusterJoin{Addresses: []string{addresses[NS2]}, PrimaryURL: primary.Primary().URL, PrimaryAddress: addresses[NS1], IgnoreCertificateErrors: true, Username: "admin", Password: password}); err != nil {
+		return nil, err
+	}
+
+	return clustered, awaitClusterZones(ctx, second)
+}
+
+// joinNode has a server join a cluster and waits until it has: asked as the
+// client that works on it now, and looked at afterwards as the one that
+// works on it once it is in, which is the cluster's own.
+func joinNode(ctx context.Context, joining, joined *technitium.Client, name string, join technitium.ClusterJoin) error {
 	deadline := time.Now().Add(joinPatience)
 	for {
-		_, joinErr := joining.Client.JoinCluster(ctx, join)
+		_, joinErr := joining.JoinCluster(ctx, join)
 		if joinErr == nil {
 			break
 		}
-		if now, answered := settled(ctx, second); answered && now.Initialized {
+		if now, answered := settled(ctx, joined); answered && now.Initialized {
 			break
 		}
 		// two failures pass by themselves: the primary refuses the
@@ -362,24 +376,66 @@ func formCluster(ctx context.Context, set *servers.Set) (*servers.Set, error) {
 		// a fresh server gets no answer at all
 		_, answered := errors.AsType[*technitium.APIError](joinErr)
 		if (answered && !strings.Contains(joinErr.Error(), "Connection refused")) || time.Now().After(deadline) {
-			return nil, fmt.Errorf("%s joining: %w", NS2, joinErr)
+			return fmt.Errorf("%s joining: %w", name, joinErr)
 		}
 		select {
 		case <-ctx.Done():
-			return nil, errors.Join(ctx.Err(), joinErr)
+			return errors.Join(ctx.Err(), joinErr)
 		case <-time.After(joinWait):
 		}
 	}
 
-	// the first server's token works on the second from here on, once its console is back
-	if _, answered := settled(ctx, second); !answered {
-		return nil, fmt.Errorf("%s joined the cluster and did not answer again with the primary's token", NS2)
+	// the cluster's token works on the server from here on, once its console is back
+	if _, answered := settled(ctx, joined); !answered {
+		return fmt.Errorf("%s joined the cluster and did not answer again with the primary's token", name)
 	}
-	if _, err := second.Session(ctx); err != nil {
-		return nil, fmt.Errorf("%s has joined, and the primary's token is not taken there: %w", NS2, err)
+	if _, err := joined.Session(ctx); err != nil {
+		return fmt.Errorf("%s has joined, and the primary's token is not taken there: %w", name, err)
 	}
 
-	return clustered, awaitClusterZones(ctx, second)
+	return nil
+}
+
+// TakingApart reports whether this run is the one that ends a suite by
+// taking its cluster apart, which nothing can run after: make starts it
+// last, alone (see the makefile's testacc-integration).
+func (w *World) TakingApart() bool {
+	return w.Topology == Cluster && environment.Get("TEST_APART") != ""
+}
+
+// Join has one of the two servers join the cluster the other is the primary
+// of, and waits until it holds the cluster's zones. Both are asked with the
+// cluster's token, which a server that has left a cluster still takes.
+func (w *World) Join(ctx context.Context, joiner, primary string) error {
+	joining, err := w.Client(joiner)
+	if err != nil {
+		return err
+	}
+	leading, err := w.Client(primary)
+	if err != nil {
+		return err
+	}
+	state, answered := settled(ctx, leading)
+	if !answered || state.Primary() == nil {
+		return fmt.Errorf("%s is not the primary of a cluster to join: %+v", primary, state)
+	}
+	if err := joinNode(ctx, joining, joining, joiner, technitium.ClusterJoin{Addresses: []string{w.Address(joiner)}, PrimaryURL: state.Primary().URL, PrimaryAddress: w.Address(primary), IgnoreCertificateErrors: true, Username: "admin", Password: w.Password()}); err != nil {
+		return err
+	}
+
+	return awaitClusterZones(ctx, joining)
+}
+
+// Settled asks a server how it stands in a cluster, waiting out a console
+// that is restarting, as one does when it joins or leaves. It reports false
+// when the server never answers.
+func (w *World) Settled(ctx context.Context, name string) (*technitium.Cluster, bool) {
+	c, err := w.Client(name)
+	if err != nil {
+		return nil, false
+	}
+
+	return settled(ctx, c)
 }
 
 // awaitClusterZones waits for a node that has just joined to hold the
@@ -403,7 +459,7 @@ func awaitClusterZones(ctx context.Context, second *technitium.Client) error {
 		}
 		last = fmt.Sprintf("%d of its 2 zones are live (%v)", live, err)
 		if time.Now().After(deadline) {
-			return fmt.Errorf("%s joined the cluster and never took its zones: %s", NS2, last)
+			return fmt.Errorf("a server joined the cluster and never took its zones: %s", last)
 		}
 		select {
 		case <-ctx.Done():

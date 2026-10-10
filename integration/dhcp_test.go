@@ -141,7 +141,7 @@ func TestDHCP(t *testing.T) {
 
 	// a scope, made enabled, on the interface whose network it is
 	want := technitium.NewScope{Name: scope, StartingAddress: pool.First.String(), EndingAddress: pool.Last.String(), SubnetMask: pool.Mask, DomainName: domain, DNSUpdates: new(true), RouterAddress: pool.Subnet.Addr().Next().String(), DNSServers: []string{world.Address(world.First), "10.99.99.99"}, LeaseTimeDays: 1, Exclusions: [][2]string{{pool.At(50), pool.At(59)}}}
-	if err := c.SetScope(ctx, want); err != nil {
+	if err := c.SetScope(ctx, &want); err != nil {
 		t.Fatal(err)
 	}
 	scopes, err := c.Scopes(ctx)
@@ -159,7 +159,7 @@ func TestDHCP(t *testing.T) {
 		t.Errorf("Scope = %+v", got)
 	}
 	// set again with less, it keeps what was left out
-	if err := c.SetScope(ctx, technitium.NewScope{Name: scope, StartingAddress: want.StartingAddress, EndingAddress: want.EndingAddress, SubnetMask: pool.Mask}); err != nil {
+	if err := c.SetScope(ctx, &technitium.NewScope{Name: scope, StartingAddress: want.StartingAddress, EndingAddress: want.EndingAddress, SubnetMask: pool.Mask}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err = c.Scope(ctx, scope); err != nil || got.DomainName != domain || !got.DNSUpdates || len(got.Exclusions) != 1 || len(got.DNSServers) != 2 {
@@ -173,7 +173,7 @@ func TestDHCP(t *testing.T) {
 		t.Errorf("a scope switched off = %+v, %v", scopes, err)
 	}
 	// set while it is off, a scope stays off: only one that is made is switched on
-	if err := c.SetScope(ctx, technitium.NewScope{Name: scope, StartingAddress: want.StartingAddress, EndingAddress: want.EndingAddress, SubnetMask: pool.Mask}); err != nil {
+	if err := c.SetScope(ctx, &technitium.NewScope{Name: scope, StartingAddress: want.StartingAddress, EndingAddress: want.EndingAddress, SubnetMask: pool.Mask}); err != nil {
 		t.Fatal(err)
 	}
 	if scopes, err = c.Scopes(ctx); err != nil || slices.ContainsFunc(scopes, func(s technitium.Scope) bool { return s.Name == scope && s.Enabled }) {
@@ -185,19 +185,19 @@ func TestDHCP(t *testing.T) {
 	if scopes, err = c.Scopes(ctx); err != nil || !slices.ContainsFunc(scopes, func(s technitium.Scope) bool { return s.Name == scope && s.Enabled }) {
 		t.Errorf("a scope switched back on = %+v, %v", scopes, err)
 	}
-	if err := c.SetScope(ctx, technitium.NewScope{Name: scope, StartingAddress: want.StartingAddress, EndingAddress: want.EndingAddress, SubnetMask: pool.Mask, LeaseTime: 36*time.Hour + 30*time.Minute, DNSUpdates: new(false), UseThisDNSServer: new(true), AllowOnlyReservedLeases: new(true)}); err != nil {
+	if err := c.SetScope(ctx, &technitium.NewScope{Name: scope, StartingAddress: want.StartingAddress, EndingAddress: want.EndingAddress, SubnetMask: pool.Mask, LeaseTime: 36*time.Hour + 30*time.Minute, DNSUpdates: new(false), UseThisDNSServer: new(true), AllowOnlyReservedLeases: new(true)}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err = c.Scope(ctx, scope); err != nil || got.LeaseTimeDays != 1 || got.LeaseTimeHours != 12 || got.LeaseTimeMinutes != 30 || got.DNSUpdates || !got.UseThisDNSServer || !got.AllowOnlyReservedLeases || got.DomainName != domain {
 		t.Errorf("after its lease time and three switches were set = %+v, %v", got, err)
 	}
-	if err := c.SetScope(ctx, technitium.NewScope{Name: scope, StartingAddress: want.StartingAddress, EndingAddress: want.EndingAddress, SubnetMask: pool.Mask, LeaseTimeDays: 1, LeaseTime: 24 * time.Hour, DNSUpdates: new(true), UseThisDNSServer: new(false), AllowOnlyReservedLeases: new(false), DNSServers: want.DNSServers}); err != nil {
+	if err := c.SetScope(ctx, &technitium.NewScope{Name: scope, StartingAddress: want.StartingAddress, EndingAddress: want.EndingAddress, SubnetMask: pool.Mask, LeaseTimeDays: 1, LeaseTime: 24 * time.Hour, DNSUpdates: new(true), UseThisDNSServer: new(false), AllowOnlyReservedLeases: new(false), DNSServers: want.DNSServers}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err = c.Scope(ctx, scope); err != nil || got.LeaseTimeDays != 1 || got.LeaseTimeHours != 0 || !got.DNSUpdates || got.UseThisDNSServer || got.AllowOnlyReservedLeases || len(got.DNSServers) != 2 {
 		t.Errorf("after they were set back = %+v, %v", got, err)
 	}
-	if err := c.SetScope(ctx, technitium.NewScope{Name: "sdk-dhcp-over", StartingAddress: pool.At(10), EndingAddress: pool.At(20), SubnetMask: pool.Mask}); err == nil || !strings.Contains(err.Error(), "overlapping") {
+	if err := c.SetScope(ctx, &technitium.NewScope{Name: "sdk-dhcp-over", StartingAddress: pool.At(10), EndingAddress: pool.At(20), SubnetMask: pool.Mask}); err == nil || !strings.Contains(err.Error(), "overlapping") {
 		_ = c.DeleteScope(ctx, "sdk-dhcp-over")
 		t.Errorf("a scope over another's range = %v, want it refused", err)
 	}
@@ -261,6 +261,53 @@ func TestDHCP(t *testing.T) {
 		t.Errorf("the phone's lease = %+v, want the name it gave though the record at it is another's", l)
 	}
 
+	// a lease made a reservation keeps the address it has, and the scope keeps it for the machine; made ordinary again, the reservation is gone and the lease runs out as any other
+	phoneAt := leases()[phone].Address
+	reservedFor := func(hardwareAddress string) bool {
+		t.Helper()
+		details, readErr := c.Scope(ctx, scope)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+
+		return slices.ContainsFunc(details.ReservedLeases, func(r technitium.Reservation) bool { return r.HardwareAddress == hardwareAddress })
+	}
+	if leases()[phone].Type != "Dynamic" || reservedFor(phone) {
+		t.Errorf("the phone's lease before it was reserved = %+v", leases()[phone])
+	}
+	if err := c.ReserveLease(ctx, scope, phone); err != nil {
+		t.Fatalf("ReserveLease = %v", err)
+	}
+	if l := leases()[phone]; l.Type != "Reserved" || l.Address != phoneAt || !reservedFor(phone) {
+		t.Errorf("the phone's lease, reserved = %+v with a reservation %v", l, reservedFor(phone))
+	}
+	if err := c.UnreserveLease(ctx, scope, phone); err != nil {
+		t.Fatalf("UnreserveLease = %v", err)
+	}
+	if l := leases()[phone]; l.Type != "Dynamic" || l.Address != phoneAt || reservedFor(phone) {
+		t.Errorf("the phone's lease, made ordinary again = %+v with a reservation %v", l, reservedFor(phone))
+	}
+	// the same by the identifier the phone sent, which is what the scope knows its lease by
+	phoneID := leases()[phone].ClientIdentifier
+	if err := c.ReserveLeaseOfClient(ctx, scope, phoneID); err != nil {
+		t.Fatalf("ReserveLeaseOfClient(%q) = %v", phoneID, err)
+	}
+	if l := leases()[phone]; l.Type != "Reserved" || !reservedFor(phone) {
+		t.Errorf("the phone's lease, reserved by its identifier = %+v", l)
+	}
+	if err := c.UnreserveLeaseOfClient(ctx, scope, phoneID); err != nil {
+		t.Fatalf("UnreserveLeaseOfClient = %v", err)
+	}
+	if l := leases()[phone]; l.Type != "Dynamic" || reservedFor(phone) {
+		t.Errorf("the phone's lease, made ordinary by its identifier = %+v", l)
+	}
+	if err := c.ReserveLease(ctx, scope, absent); err == nil {
+		t.Error("a lease nobody holds was reserved")
+	}
+	if err := c.UnreserveLease(ctx, "sdk-nope", phone); err == nil {
+		t.Error("a lease was made ordinary in a scope that is not there")
+	}
+
 	// what the server takes and what it refuses
 	reserve(technitium.Reservation{HardwareAddress: outside, Address: "10.1.1.1"})
 	reserve(technitium.Reservation{HardwareAddress: twin, Address: pool.At(40)})
@@ -315,6 +362,13 @@ func TestDHCP(t *testing.T) {
 	}
 	if r := reserved(); r[printer].Address != "" || r[twin].Address != pool.At(40) {
 		t.Errorf("the reservations after the printer's lease was removed = %+v: a reserved lease no longer takes its reservation with it, which dhcp_lease_delete says it does", r)
+	}
+	// and the phone's by its identifier
+	if err := c.RemoveLeaseOfClient(ctx, scope, phoneID); err != nil {
+		t.Fatalf("RemoveLeaseOfClient = %v", err)
+	}
+	if now := leases(); now[phone].Address != "" {
+		t.Errorf("the phone's lease after it was removed by its identifier = %+v", now[phone])
 	}
 
 	// a scope deleted takes its leases, and leaves the records of its reservations behind

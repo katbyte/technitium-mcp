@@ -80,6 +80,20 @@ func (c *Client) Cache(ctx context.Context, name string) (*Cached, error) {
 	return &out, nil
 }
 
+// CacheAbove is Cache walking the other way: asked for a name that only
+// leads on, with nothing kept at it and one name under it, the answer is for
+// the nearest name above that keeps something or branches, where Cache
+// answers for the first below. Any other name is answered for itself either
+// way.
+func (c *Client) CacheAbove(ctx context.Context, name string) (*Cached, error) {
+	var out Cached
+	if err := c.read(ctx, "cache/list", url.Values{"domain": {name}, "direction": {"up"}}, &out); err != nil {
+		return nil, err
+	}
+
+	return &out, nil
+}
+
 // DeleteCached drops what the server's cache holds at a name and at every
 // name under it, so the next query for one is resolved afresh.
 func (c *Client) DeleteCached(ctx context.Context, name string) error {

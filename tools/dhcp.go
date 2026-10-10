@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"math/bits"
 	"net/netip"
@@ -266,23 +267,100 @@ func lasts(d *technitium.ScopeDetails) string {
 
 // scopeRow is one scope of one server, as dhcp_scopes answers.
 type scopeRow struct {
-	Server       string   `json:"server"`
-	Scope        string   `json:"scope"`
-	Enabled      bool     `json:"enabled"                 jsonschema:"the scope is switched on: only an enabled scope leases"`
-	Network      string   `json:"network,omitempty"       jsonschema:"the network the scope is for, as its address and the bits of its mask"`
-	Range        string   `json:"range"                   jsonschema:"the first and the last address it leases from"`
-	Exclusions   []string `json:"exclusions,omitempty"    jsonschema:"the runs of the range it never leases from, each as its first and last address"`
-	Interface    string   `json:"interface,omitempty"     jsonschema:"the server's own address on the network, where it hears machines asking; 0.0.0.0 when it has none there and can only be reached through a relay; absent while the scope is off"`
-	LeaseTime    string   `json:"lease_time,omitempty"    jsonschema:"how long a lease runs, as 1d, 12h or 1d 6h"`
-	Domain       string   `json:"domain,omitempty"        jsonschema:"the domain machines are told they are in, and the one their names are recorded under when dns_updates is on"`
-	DNSUpdates   bool     `json:"dns_updates,omitempty"   jsonschema:"the server records each lease's and each reservation's host name under domain itself, with its PTR, and removes them when the lease ends: records in zone_records with the comment Via '<scope>' DHCP scope are its own"`
-	Router       string   `json:"router,omitempty"        jsonschema:"the gateway machines are given"`
-	DNSServers   []string `json:"dns_servers,omitempty"   jsonschema:"the name servers machines are told to use, in order; this server is the server's own address on the network"`
-	OnlyReserved bool     `json:"only_reserved,omitempty" jsonschema:"the scope leases to no machine it has no reservation for"`
-	Addresses    int      `json:"addresses"               jsonschema:"how many addresses the range holds, less its exclusions"`
-	Free         int      `json:"free"                    jsonschema:"how many of those no machine holds and none is reserved: at 0 a new machine gets nothing"`
-	Leased       int      `json:"leased"                  jsonschema:"how many leases machines hold now, of both kinds"`
-	Reserved     int      `json:"reserved"                jsonschema:"how many addresses are kept for particular machines"`
+	Server       string     `json:"server"`
+	Scope        string     `json:"scope"`
+	Enabled      bool       `json:"enabled"                 jsonschema:"the scope is switched on: only an enabled scope leases"`
+	Network      string     `json:"network,omitempty"       jsonschema:"the network the scope is for, as its address and the bits of its mask"`
+	Range        string     `json:"range"                   jsonschema:"the first and the last address it leases from"`
+	Exclusions   []string   `json:"exclusions,omitempty"    jsonschema:"the runs of the range it never leases from, each as its first and last address"`
+	Interface    string     `json:"interface,omitempty"     jsonschema:"the server's own address on the network, where it hears machines asking; 0.0.0.0 when it has none there and can only be reached through a relay; absent while the scope is off"`
+	LeaseTime    string     `json:"lease_time,omitempty"    jsonschema:"how long a lease runs, as 1d, 12h or 1d 6h"`
+	Domain       string     `json:"domain,omitempty"        jsonschema:"the domain machines are told they are in, and the one their names are recorded under when dns_updates is on"`
+	DNSUpdates   bool       `json:"dns_updates,omitempty"   jsonschema:"the server records each lease's and each reservation's host name under domain itself, with its PTR, and removes them when the lease ends: records in zone_records with the comment Via '<scope>' DHCP scope are its own"`
+	Router       string     `json:"router,omitempty"        jsonschema:"the gateway machines are given"`
+	DNSServers   []string   `json:"dns_servers,omitempty"   jsonschema:"the name servers machines are told to use, in order; this server is the server's own address on the network"`
+	OnlyReserved bool       `json:"only_reserved,omitempty" jsonschema:"the scope leases to no machine it has no reservation for"`
+	More         *scopeMore `json:"more,omitempty"          jsonschema:"what else the scope hands out and how it leases, where any of it is set"`
+	Addresses    int        `json:"addresses"               jsonschema:"how many addresses the range holds, less its exclusions"`
+	Free         int        `json:"free"                    jsonschema:"how many of those no machine holds and none is reserved: at 0 a new machine gets nothing"`
+	Leased       int        `json:"leased"                  jsonschema:"how many leases machines hold now, of both kinds"`
+	Reserved     int        `json:"reserved"                jsonschema:"how many addresses are kept for particular machines"`
+}
+
+// scopeMore is the rest of what a scope hands the machines it leases to,
+// and of how it leases: the options most networks leave alone.
+type scopeMore struct {
+	DNSTTL         int             `json:"dns_ttl,omitempty"            jsonschema:"the TTL of the records the scope writes for its leases, in seconds"`
+	DNSOverwrite   bool            `json:"dns_overwrite,omitempty"      jsonschema:"a lease may write over an address record made by hand at the machine's name"`
+	DomainSearch   []string        `json:"domain_search,omitempty"      jsonschema:"the domains machines are told to try a short name under, in order"`
+	NTPServers     []string        `json:"ntp_servers,omitempty"        jsonschema:"the time servers machines are told of, by address"`
+	NTPServerNames []string        `json:"ntp_server_names,omitempty"   jsonschema:"time servers by name, which the server resolves and hands out as addresses"`
+	WINSServers    []string        `json:"wins_servers,omitempty"`
+	StaticRoutes   []string        `json:"static_routes,omitempty"      jsonschema:"routes machines are given to other networks, each as the network and the router that reaches it: 198.51.100.0/24 via 192.0.2.2"`
+	BootServer     string          `json:"boot_server,omitempty"        jsonschema:"for machines that start from the network: the address of the server they fetch from"`
+	BootServerName string          `json:"boot_server_name,omitempty"   jsonschema:"that server's name"`
+	BootFile       string          `json:"boot_file,omitempty"          jsonschema:"the file they fetch"`
+	TFTPServers    []string        `json:"tftp_servers,omitempty"       jsonschema:"the servers phones and the like fetch their configuration from (option 150)"`
+	CAPWAP         []string        `json:"capwap_controllers,omitempty" jsonschema:"the controllers wireless access points are told to find (option 138)"`
+	VendorInfo     []vendorOption  `json:"vendor_info,omitempty"        jsonschema:"what the machines of one vendor are told"`
+	GenericOptions []genericOption `json:"generic_options,omitempty"    jsonschema:"any other DHCP option, by its number"`
+	OfferDelayMS   int             `json:"offer_delay_ms,omitempty"     jsonschema:"how long the scope waits before it offers an address, in milliseconds: a server set to wait lets another answer first"`
+	PingCheck      bool            `json:"ping_check,omitempty"         jsonschema:"the scope pings an address before it leases it, and leaves alone one that answers: for a network where some machines set their own address"`
+	PingTimeoutMS  int             `json:"ping_timeout_ms,omitempty"`
+	PingRetries    int             `json:"ping_retries,omitempty"`
+	BlockLocalMAC  bool            `json:"block_local_mac,omitempty"    jsonschema:"the scope leases to no machine with a made-up hardware address, as phones and laptops use to avoid being followed"`
+	IgnoreClientID bool            `json:"ignore_client_id,omitempty"   jsonschema:"the scope tells machines apart by hardware address alone, whatever identifier one sends"`
+}
+
+// vendorOption is what a scope tells the machines of one vendor.
+type vendorOption struct {
+	Identifier  string `json:"identifier"  jsonschema:"the vendor class a machine says it is, or the server's expression that matches one"`
+	Information string `json:"information" jsonschema:"what such a machine is told, as bytes in hex with colons between"`
+}
+
+// genericOption is a DHCP option by its number.
+type genericOption struct {
+	Code  int    `json:"code"  jsonschema:"the option's number"`
+	Value string `json:"value" jsonschema:"its value as bytes in hex with colons between"`
+}
+
+// scopeMoreOf is the rest of a scope's options, nil when none is set to
+// anything but what a new scope has.
+func scopeMoreOf(d *technitium.ScopeDetails) *scopeMore {
+	more := scopeMore{DNSOverwrite: d.DNSOverwriteForDynamicLease, DomainSearch: d.DomainSearchList, NTPServers: d.NTPServers, NTPServerNames: d.NTPServerDomainNames, WINSServers: d.WINSServers, BootServer: d.ServerAddress, BootServerName: d.ServerHostName, BootFile: d.BootFileName, TFTPServers: d.TFTPServerAddresses, CAPWAP: d.CAPWAPAddresses, OfferDelayMS: d.OfferDelayTime, PingCheck: d.PingCheckEnabled, BlockLocalMAC: d.BlockLocallyAdministeredMACAddresses, IgnoreClientID: d.IgnoreClientIdentifierOption}
+	// the TTL of the records and the times of the ping are said only where they mean something
+	if d.DNSUpdates {
+		more.DNSTTL = d.DNSTTL
+	}
+	if d.PingCheckEnabled {
+		more.PingTimeoutMS, more.PingRetries = d.PingCheckTimeout, d.PingCheckRetries
+	}
+	for _, route := range d.StaticRoutes {
+		more.StaticRoutes = append(more.StaticRoutes, routeText(route))
+	}
+	for _, v := range d.VendorInfo {
+		more.VendorInfo = append(more.VendorInfo, vendorOption{Identifier: v.Identifier, Information: v.Information})
+	}
+	for _, o := range d.GenericOptions {
+		more.GenericOptions = append(more.GenericOptions, genericOption{Code: o.Code, Value: o.Value})
+	}
+	if raw, err := json.Marshal(more); err != nil || string(raw) == "{}" {
+		return nil
+	}
+
+	return &more
+}
+
+// routeText is a route as a tool writes one: 198.51.100.0/24 via 192.0.2.2.
+func routeText(route technitium.StaticRoute) string {
+	to := route.Destination + " mask " + route.SubnetMask
+	if destination, ok := ipv4(route.Destination); ok {
+		if mask, isMask := ipv4(route.SubnetMask); isMask {
+			to = netip.PrefixFrom(destination, bits.LeadingZeros32(^number(mask))).String()
+		}
+	}
+
+	return to + " via " + route.Router
 }
 
 // scopeRowOf is a scope as dhcp_scopes gives one.
@@ -292,6 +370,7 @@ func scopeRowOf(server string, held *dhcpHeld, s *dhcpScope) scopeRow {
 	if network, ok := s.network(); ok {
 		row.Network = network.String()
 	}
+	row.More = scopeMoreOf(d)
 	for _, e := range d.Exclusions {
 		row.Exclusions = append(row.Exclusions, e.StartingAddress+"-"+e.EndingAddress)
 	}

@@ -96,7 +96,7 @@ func TestDHCPScopes(t *testing.T) {
 		t.Errorf("LAN = %v", lan)
 	}
 	// 20 addresses less the 2 left out; three leases are in the range, and no reservation is
-	if acctest.Num(t, lan["addresses"], "addresses") != 18 || acctest.Num(t, lan["free"], "free") != 15 || acctest.Num(t, lan["leased"], "leased") != 5 || acctest.Num(t, lan["reserved"], "reserved") != 7 {
+	if acctest.Num(t, lan["addresses"], "addresses") != 18 || acctest.Num(t, lan["free"], "free") != 15 || acctest.Num(t, lan["leased"], "leased") != 5 || acctest.Num(t, lan["reserved"], "reserved") != 8 {
 		t.Errorf("LAN's addresses = %v", lan)
 	}
 	if lab := rows[2]; lab["scope"] != "Lab" || acctest.Num(t, lab["addresses"], "addresses") != 10 || acctest.Num(t, lab["free"], "free") != 1 || acctest.Num(t, lab["leased"], "leased") != 9 || lab["dns_updates"] != nil {
@@ -136,12 +136,12 @@ func TestDHCPLeases(t *testing.T) {
 	out := suite.Call(t, "dhcp_leases", nil)
 	rows := acctest.Rows(t, out["leases"], "leases")
 	counts := acctest.Object(t, out["counts"], "counts")
-	// 5 leases on LAN and 9 on Lab, and the 6 of LAN's 7 reservations that no machine holds
-	if len(rows) != 20 || acctest.Num(t, out["total"], "total") != 20 || acctest.NumOr0(counts["dynamic"]) != 13 || acctest.NumOr0(counts["reserved"]) != 7 || acctest.NumOr0(counts["unclaimed"]) != 6 || out["note"] != nil {
+	// 5 leases on LAN and 9 on Lab, and the 7 of LAN's 8 reservations that no machine holds
+	if len(rows) != 21 || acctest.Num(t, out["total"], "total") != 21 || acctest.NumOr0(counts["dynamic"]) != 13 || acctest.NumOr0(counts["reserved"]) != 8 || acctest.NumOr0(counts["unclaimed"]) != 7 || out["note"] != nil {
 		t.Fatalf("leases = %d, %v", len(rows), out["counts"])
 	}
 	// scope by scope, in the order of the addresses
-	if rows[0]["scope"] != "Lab" || rows[0]["address"] != "10.20.5.10" || rows[8]["address"] != "10.20.5.18" || rows[9]["scope"] != "LAN" || rows[9]["address"] != "10.9.9.9" || rows[10]["address"] != "10.20.0.4" || rows[19]["address"] != "10.20.0.102" {
+	if rows[0]["scope"] != "Lab" || rows[0]["address"] != "10.20.5.10" || rows[8]["address"] != "10.20.5.18" || rows[9]["scope"] != "LAN" || rows[9]["address"] != "10.9.9.9" || rows[10]["address"] != "10.20.0.4" || rows[20]["address"] != "10.20.0.102" {
 		t.Errorf("the order = %v", rows)
 	}
 
@@ -163,7 +163,7 @@ func TestDHCPLeases(t *testing.T) {
 	if acctest.Num(t, named["total"], "total") != 3 || len(acctest.Object(t, named["counts"], "counts")) != 1 {
 		t.Errorf("the dynamic leases with a name = %v", named)
 	}
-	if unclaimed := suite.Call(t, "dhcp_leases", map[string]any{"type": "unclaimed"}); acctest.Num(t, unclaimed["total"], "total") != 6 {
+	if unclaimed := suite.Call(t, "dhcp_leases", map[string]any{"type": "unclaimed"}); acctest.Num(t, unclaimed["total"], "total") != 7 {
 		t.Errorf("unclaimed = %v", unclaimed)
 	}
 	paged := suite.Call(t, "dhcp_leases", map[string]any{"scope": "lab", "limit": 4, "offset": 2})

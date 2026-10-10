@@ -5,8 +5,9 @@
 // package works with the typed values here and never sees a raw answer.
 //
 // One Client talks to one server. Every call names its API path as a string
-// literal handed to read, readWhole or write, which is what lets the tests
-// hold the package against the vendored document path by path.
+// literal handed to read, readWhole, readFile, write, writeWhole or upload,
+// which is what lets the tests hold the package against the vendored document
+// path by path.
 package technitium
 
 import (
@@ -16,8 +17,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -54,8 +57,18 @@ const (
 type Client struct {
 	baseURL string
 	token   string
-	http    *chttp.Client
+	// node is another node of the server's cluster the calls are passed on
+	// to, "" for the server itself (see OnNode)
+	node string
+	http *chttp.Client
 }
+
+// secretNames are the parameters and fields a trace must not show beside the
+// ones it hides by their ending (password, secret, token): the passwords the
+// API takes under shorter names, a one-time code, the picture a second
+// factor's secret is shown as, a private key, and the transfer keys as the
+// settings are sent them, each with its shared secret.
+var secretNames = []string{"pass", "newPass", "totp", "primaryNodeTotp", "qrCodePngImage", "pemKskPrivateKey", "pemZskPrivateKey", "pemPrivateKey", "tsigKeys"}
 
 // Option is something a client is made with beside its address and token.
 type Option func(o *chttp.Options)
@@ -99,7 +112,8 @@ func New(baseURL, token string, opts ...Option) (*Client, error) {
 	// takes goes in a parameter named pass, which is said here. A write is
 	// sent once, and a read again only for a connection that dropped or an
 	// answer of a gateway's: a server that is not there is said at once
-	options := chttp.Options{Name: "Technitium", SecretNames: []string{"pass"}}
+	// the server sends nothing of an answer until the call is done, and some calls take as long as there is work behind them - a server joining a cluster, a backup restored, a secondary told of a change while it is fetching one - so the wait for an answer to begin is the wait for the whole of it
+	options := chttp.Options{Name: "Technitium", SecretNames: secretNames, HeaderWait: requestTimeout}
 	for _, opt := range opts {
 		opt(&options)
 	}
@@ -117,6 +131,113 @@ func New(baseURL, token string, opts ...Option) (*Client, error) {
 
 // BaseURL is the address the client was made with, without a trailing slash.
 func (c *Client) BaseURL() string { return c.baseURL }
+
+// OnNode is this client with its calls passed on to another node of the
+// cluster the server is in, named by the node's domain: the server asked
+// answers for that node. Only the calls the API passes on take it (see
+// nodeCalls); any other fails without being sent, since it would be answered
+// by the wrong server. "" is the server itself again.
+func (c *Client) OnNode(domain string) *Client {
+	on := *c
+	on.node = domain
+
+	return &on
+}
+
+// Node is the node the client's calls are passed on to, "" for the server
+// itself.
+func (c *Client) Node() string { return c.node }
+
+// anonymous is this client with no token, for the two calls that take a
+// name and a password in place of one.
+func (c *Client) anonymous() *Client {
+	anon := *c
+	anon.token, anon.node = "", ""
+
+	return &anon
+}
+
+// nodeCalls are the calls the API passes on to another node of a cluster
+// when asked to, as the API document gives them; the tests hold the list
+// against the document.
+var nodeCalls = []string{
+	"admin/cluster/primary/delete",
+	"admin/cluster/primary/setOptions",
+	"admin/cluster/secondary/leave",
+	"admin/cluster/secondary/promote",
+	"admin/cluster/secondary/resync",
+	"admin/cluster/secondary/updatePrimary",
+	"admin/cluster/state",
+	"admin/cluster/updateIpAddress",
+	"admin/groups/get",
+	"admin/groups/list",
+	"admin/permissions/list",
+	"admin/permissions/set",
+	"admin/sessions/delete",
+	"admin/sessions/list",
+	"admin/users/get",
+	"admin/users/list",
+	"allowed/export",
+	"allowed/list",
+	"apps/config/get",
+	"apps/list",
+	"apps/listStoreApps",
+	"blocked/export",
+	"blocked/list",
+	"dashboard/stats/deleteAll",
+	"dashboard/stats/get",
+	"dashboard/stats/getTop",
+	"dnsClient/healthCheck",
+	"dnsClient/resolve",
+	"logs/delete",
+	"logs/deleteAll",
+	"logs/download",
+	"logs/export",
+	"logs/list",
+	"logs/query",
+	"settings/backup",
+	"settings/restore",
+	"zones/catalogs/list",
+	"zones/clone",
+	"zones/convert",
+	"zones/create",
+	"zones/delete",
+	"zones/disable",
+	"zones/dnssec/properties/addPrivateKey",
+	"zones/dnssec/properties/convertToNSEC",
+	"zones/dnssec/properties/convertToNSEC3",
+	"zones/dnssec/properties/deletePrivateKey",
+	"zones/dnssec/properties/get",
+	"zones/dnssec/properties/publishAllPrivateKeys",
+	"zones/dnssec/properties/retireDnsKey",
+	"zones/dnssec/properties/rolloverDnsKey",
+	"zones/dnssec/properties/updateDnsKeyTtl",
+	"zones/dnssec/properties/updateNSEC3Params",
+	"zones/dnssec/properties/updatePrivateKey",
+	"zones/dnssec/sign",
+	"zones/dnssec/unsign",
+	"zones/dnssec/viewDS",
+	"zones/enable",
+	"zones/export",
+	"zones/import",
+	"zones/list",
+	"zones/options/get",
+	"zones/options/set",
+	"zones/permissions/get",
+	"zones/permissions/set",
+	"zones/records/add",
+	"zones/records/delete",
+	"zones/records/get",
+	"zones/records/update",
+	"zones/resync",
+}
+
+// file is a file sent with a call, as a browser posts one from a form.
+type file struct {
+	// name is the file's name, which the server reads nothing from
+	name string
+	data []byte
+}
 
 // APIError is the server refusing a call: the API answers every request it
 // understands with HTTP 200 and says how it went in the body.
@@ -187,7 +308,7 @@ func (c *Client) read(ctx context.Context, path string, params url.Values, out a
 			case <-time.After(wait):
 			}
 		}
-		if _, response, err = c.call(ctx, http.MethodGet, path, params); !busy(err) {
+		if _, response, err = c.call(ctx, http.MethodGet, path, params, nil); !busy(err) {
 			break
 		}
 	}
@@ -215,7 +336,7 @@ func busy(err error) bool {
 // readWhole is read for the calls that put their answer beside "status"
 // rather than under "response".
 func (c *Client) readWhole(ctx context.Context, path string, params url.Values, out any) error {
-	whole, _, err := c.call(ctx, http.MethodGet, path, params)
+	whole, _, err := c.call(ctx, http.MethodGet, path, params, nil)
 	if err != nil {
 		return err
 	}
@@ -227,7 +348,33 @@ func (c *Client) readWhole(ctx context.Context, path string, params url.Values, 
 // in the body, and decodes what is under "response" into out. It is sent
 // once: a write the server did not answer may still have been made.
 func (c *Client) write(ctx context.Context, path string, params url.Values, out any) error {
-	_, response, err := c.call(ctx, http.MethodPost, path, params)
+	_, response, err := c.call(ctx, http.MethodPost, path, params, nil)
+	if err != nil {
+		return err
+	}
+
+	return decode(path, response, out)
+}
+
+// writeWhole is write for the calls that put their answer beside "status"
+// rather than under "response".
+func (c *Client) writeWhole(ctx context.Context, path string, params url.Values, out any) error {
+	whole, _, err := c.call(ctx, http.MethodPost, path, params, nil)
+	if err != nil {
+		return err
+	}
+
+	return decode(path, whole, out)
+}
+
+// upload asks a call that takes a file: a POST with the file as a form's and
+// the call's parameters in the address, which is where the API reads them
+// from when the body is a file. It is sent once, as a write is.
+func (c *Client) upload(ctx context.Context, path string, params url.Values, sent file, out any) error {
+	if len(sent.data) == 0 {
+		return fmt.Errorf("%s: the file to send is empty", path)
+	}
+	_, response, err := c.call(ctx, http.MethodPost, path, params, &sent)
 	if err != nil {
 		return err
 	}
@@ -256,26 +403,38 @@ func decode(path string, raw json.RawMessage, out any) error {
 // JSON - a list, one entry a line - and returns the text. A call the server
 // refuses answers in JSON all the same, and is that error.
 func (c *Client) readText(ctx context.Context, path string, params url.Values) (string, error) {
-	raw, err := c.fetch(ctx, http.MethodGet, path, params)
+	raw, err := c.download(ctx, path, params)
+
+	return string(raw), err
+}
+
+// readFile is readText for a file that is not text: a backup.
+func (c *Client) readFile(ctx context.Context, path string, params url.Values) ([]byte, error) {
+	return c.download(ctx, path, params)
+}
+
+// download asks a call that answers with a file and returns what is in it.
+func (c *Client) download(ctx context.Context, path string, params url.Values) ([]byte, error) {
+	raw, err := c.fetch(ctx, http.MethodGet, path, params, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	var env envelope
 	if bytes.HasPrefix(bytes.TrimSpace(raw), []byte("{")) && json.Unmarshal(raw, &env) == nil && env.Status != "" {
 		if env.Status != statusOK {
-			return "", &APIError{Path: path, Status: env.Status, Message: env.ErrorMessage, Inner: env.InnerErrorMessage, Node: env.Server}
+			return nil, &APIError{Path: path, Status: env.Status, Message: env.ErrorMessage, Inner: env.InnerErrorMessage, Node: env.Server}
 		}
 
-		return "", fmt.Errorf("%s: the server said ok and sent no file", path)
+		return nil, fmt.Errorf("%s: the server said ok and sent no file", path)
 	}
 
-	return string(raw), nil
+	return raw, nil
 }
 
 // call makes one API call and returns the whole answer and the part under
 // "response", once the server has said the call went ok.
-func (c *Client) call(ctx context.Context, method, path string, params url.Values) (whole, response json.RawMessage, err error) {
-	raw, err := c.fetch(ctx, method, path, params)
+func (c *Client) call(ctx context.Context, method, path string, params url.Values, sent *file) (whole, response json.RawMessage, err error) {
+	raw, err := c.fetch(ctx, method, path, params, sent)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -293,33 +452,55 @@ func (c *Client) call(ctx context.Context, method, path string, params url.Value
 
 // fetch sends one API call and returns what the server answered, once it is
 // known to be the API that answered: not another status, and not a web page.
-func (c *Client) fetch(ctx context.Context, method, path string, params url.Values) ([]byte, error) {
+func (c *Client) fetch(ctx context.Context, method, path string, params url.Values, sent *file) ([]byte, error) {
+	if c.node != "" {
+		if !slices.Contains(nodeCalls, path) {
+			return nil, fmt.Errorf("%s: the API does not pass this call on to another node, so it cannot be asked of %s through this server: ask that node itself", path, c.node)
+		}
+		params = cloneValues(params)
+		params.Set("node", c.node)
+	}
+
+	// a GET carries its parameters in the address and a POST in its body,
+	// but for one sending a file, which has the body
 	target := c.baseURL + "/api/" + path
 	var body io.Reader = http.NoBody
-	if len(params) > 0 {
-		if method == http.MethodGet {
-			target += "?" + params.Encode()
-		} else {
-			body = strings.NewReader(params.Encode())
+	contentType := "application/x-www-form-urlencoded"
+	switch {
+	case sent != nil:
+		form, formType, err := formFile(*sent)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
 		}
+		body, contentType = form, formType
+		if len(params) > 0 {
+			target += "?" + params.Encode()
+		}
+	case len(params) == 0:
+	case method == http.MethodGet:
+		target += "?" + params.Encode()
+	default:
+		body = strings.NewReader(params.Encode())
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", userAgent)
 	if method != http.MethodGet {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Content-Type", contentType)
 	}
 
 	// the whole answer, asked for again if it stops part way; with no
 	// response there was no answer at all, and the error says why
 	resp, raw, err := c.http.Fetch(req, maxResponseBytes) //nolint:bodyclose // Fetch hands the response back with its body read and closed
 	if resp == nil {
-		return nil, fmt.Errorf("%s: %w", path, chttp.RedactError(err, "pass"))
+		return nil, fmt.Errorf("%s: %w", path, chttp.RedactError(err, secretNames...))
 	}
 
 	// the API answers 200 for every call it knows, so any other status is
@@ -339,7 +520,7 @@ func (c *Client) fetch(ctx context.Context, method, path string, params url.Valu
 	case errors.Is(err, chttp.ErrTooLarge):
 		return nil, fmt.Errorf("%s: the answer is over %d MiB, more than this client reads: ask for less at a time", path, maxResponseBytes>>20)
 	case err != nil:
-		return nil, fmt.Errorf("%s: %w", path, chttp.RedactError(err, "pass"))
+		return nil, fmt.Errorf("%s: %w", path, chttp.RedactError(err, secretNames...))
 	case chttp.IsWebPage(resp.Header.Get("Content-Type"), raw):
 		return nil, fmt.Errorf("%s: answered with a web page, not the Technitium API: check the server url", path)
 	default:
@@ -350,3 +531,64 @@ func (c *Client) fetch(ctx context.Context, method, path string, params url.Valu
 // yes is "true" as the API takes a boolean: a parameter left out is the
 // API's own default, so only what is switched on is ever sent.
 const yes = "true"
+
+// cloneValues is a copy of a call's parameters that can be added to, which a
+// call with none also has.
+func cloneValues(params url.Values) url.Values {
+	out := make(url.Values, len(params)+1)
+	for name, values := range params {
+		out[name] = slices.Clone(values)
+	}
+
+	return out
+}
+
+// isZip reports whether a file begins as a zip file does. The server keeps
+// what it is sent as an app before it finds it cannot read it, and the
+// wreck it leaves stops other servers from joining its cluster: what is no
+// zip file is not sent.
+func isZip(data []byte) bool {
+	return bytes.HasPrefix(data, []byte("PK\x03\x04"))
+}
+
+// formFile is a file as the body of a form a browser would post it in, and
+// the content type that says where its parts end.
+func formFile(sent file) (body io.Reader, contentType string, err error) {
+	var form bytes.Buffer
+	w := multipart.NewWriter(&form)
+	part, err := w.CreateFormFile("file", sent.name)
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := part.Write(sent.data); err != nil {
+		return nil, "", err
+	}
+	if err := w.Close(); err != nil {
+		return nil, "", err
+	}
+
+	return &form, w.FormDataContentType(), nil
+}
+
+// set puts the parameters that were given into a call's: a "" is one left to
+// the server.
+func set(params url.Values, given map[string]string) {
+	for name, value := range given {
+		if value != "" {
+			params.Set(name, value)
+		}
+	}
+}
+
+// flag is a boolean as the API takes one, "" when it was not given and so is
+// left as the server has it.
+func flag(value *bool) string {
+	if value == nil {
+		return ""
+	}
+	if *value {
+		return yes
+	}
+
+	return "false"
+}

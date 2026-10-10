@@ -1,6 +1,6 @@
 # Tool roadmap
 
-What technitium-mcp is for, what is built, and what is wanted next. The wanted list is what a model doing sysadmin work on a real network - two clustered Technitium servers, split-horizon names, DHCP on one node - asked for after two days of using `dig` and guesswork instead (2026-10-09).
+What technitium-mcp is for and what is built. It began as the list of what a model doing sysadmin work on a real network - two clustered Technitium servers, split-horizon names, DHCP on one node - asked for after two days of using `dig` and guesswork instead (2026-10-09), and now covers the whole server: every call in its API document and every parameter those calls take.
 
 Design rules, in priority order:
 
@@ -20,43 +20,48 @@ Design rules, in priority order:
 
 | Area | Tools | Answers |
 |---|---|---|
-| know the servers | `server_info` | "which servers are there, are they up, what version, what may this token do on each, and what is each one's place in the cluster" |
+| know the servers | `server_info`, `server_metrics` | "which servers are there, are they up, what version, what may this token do on each, and what is each one's place in the cluster", "can it resolve right now" |
 | know the zones | `zone_list`, `zone_records`, `zone_get`, `zone_export` | "what zones does each hold, where do the copies differ, where can a zone be changed, what is in this zone, how is it served and replicated", and the zone as a file to keep |
-| change the zones | `zone_create`, `zone_edit`, `zone_resync` | "make this zone", "let the other server transfer it", "fix the SOA a rename left behind", "pull the copy again" |
+| change the zones | `zone_create`, `zone_edit`, `zone_resync`, `zone_clone`, `zone_convert`, `zone_import`, `zone_delete`, `dns_import` | "make this zone" of any of the seven types, "let the other server transfer it", "let the DHCP server on the other box update this zone" with a key, "fix the SOA a rename left behind", "pull the copy again", "copy this zone in from where it is held", "take this zone away" |
 | find | `record_find`, `audit_names` | "what points at this address, by address or by chain", "is that address taken", "which of the host names in these reverse-proxy rules have no record" |
 | resolve | `dns_resolve`, `cache_get`, `cache_flush` | "does this resolve, to what, through what, on each server, and what is the outside world told", "is a stale answer being kept" |
-| change records | `record_set`, `record_delete`, `record_repoint` | "add the right DNS entries", "change everything at the old address to the new one" - each with a dry run, the PTR, and the result read back |
-| settings | `server_settings` | "how is each server set up, and where do they differ" |
-| stats | `server_stats` | "what is the server doing", "which machines lean on it", "is a large part of it failures or names that do not exist" |
-| query logs | `log_search` | "who is still asking for the old name", "which clients ask for a name that does not exist", "what was this machine told" |
-| blocking | `block_check`, `block_list`, `block_set`, `block_delete`, `block_switch`, `block_lists_set`, and `dns_resolve` saying what blocked a name | "why does this name not resolve", "why is this one not blocked", "let this name through", "do the servers block the same", "is blocking what breaks this", "add this list" |
-| DHCP | `dhcp_scopes`, `dhcp_leases`, `dhcp_reservation_set`, `dhcp_reservation_delete`, `dhcp_lease_delete`, `dhcp_scope_set` | "what has this address", "where is this machine", "is the pool running out", "pin this host", "give the second server a scope of its own" - the changes refuse what the server would take and could not work, and say what the server does to DNS with them |
-| audits | `audit_all`, `audit_servers`, `audit_targets`, `audit_reverse`, `audit_overlaps`, `audit_naming`, `audit_state`, `audit_dhcp`, `audit_blocking`, `audit_zones`, `audit_security`, `audit_split` | "what is wrong": the servers against each other, records that end nowhere, addresses against their PTRs, records never served, probable slips, what is switched off, DHCP against itself and the zones, what is blocked, zones whose own records do not fit their servers, what is left open, and - asked of a resolver named - where the inside and the outside of a split horizon do not fit |
+| change records | `record_set`, `record_delete`, `record_repoint` | "add the right DNS entries" of every record type the server has, "send this part of the zone to another name server", "change everything at the old address to the new one" - each with a dry run, the PTR, and the result read back |
+| DNSSEC | `dnssec_get`, `dnssec_sign`, `dnssec_unsign`, `dnssec_edit`, `dnssec_key_add`, `dnssec_key_edit`, `dnssec_key_delete` | "sign this zone", "what do I give the registrar", "roll this key", "what is this key waiting for" |
+| settings | `server_settings`, `settings_get`, `settings_set`, `tsig_key_set`, `tsig_key_delete` | "how is each server set up, and where do they differ", "change this setting", "make a key two servers share" |
+| backups | `settings_backup`, `settings_restore` | "keep a copy of this server before I change it", "put it back" |
+| stats | `server_stats`, `stats_delete` | "what is the server doing", "which machines lean on it", "is a large part of it failures or names that do not exist" |
+| logs | `log_search`, `log_export`, `log_files`, `log_read`, `log_delete` | "who is still asking for the old name", "what was this machine told", "why did the transfer fail", "who changed that" |
+| blocking | `block_check`, `block_list`, `block_tree`, `block_set`, `block_delete`, `block_import`, `block_flush`, `block_switch`, `block_lists_set` | "why does this name not resolve", "why is this one not blocked", "let this name through", "do the servers block the same", "is blocking what breaks this", "add this list" |
+| DHCP | `dhcp_scopes`, `dhcp_leases`, `dhcp_reservation_set`, `dhcp_reservation_delete`, `dhcp_lease_reserve`, `dhcp_lease_delete`, `dhcp_scope_set`, `dhcp_scope_delete` | "what has this address", "where is this machine", "is the pool running out", "pin this host", "give the second server a scope of its own", "hand out the time server and this route too" |
+| clusters | `cluster_get`, `cluster_create`, `cluster_join`, `cluster_edit`, `cluster_promote`, `cluster_node_delete`, `cluster_leave`, `cluster_delete` | "make these two a cluster", "is the cluster whole", "the primary is gone: make this one the primary", "take this node out" |
+| accounts | `user_list`, `user_get`, `user_set`, `user_delete`, `group_list`, `group_set`, `group_delete`, `session_list`, `session_delete`, `token_create`, `access_get`, `access_set`, `sso_get`, `sso_set`, `account_get`, `account_edit` | "who can sign in and what may each do", "whose token is this and when was it last used", "make a token that may only look", "let this account change one zone" |
+| apps | `app_list`, `app_install`, `app_config_get`, `app_config_set`, `app_delete` | "what is installed and is it current", "install the split horizon app", "how is it configured" |
+| audits | `audit_all`, `audit_servers`, `audit_targets`, `audit_reverse`, `audit_overlaps`, `audit_naming`, `audit_state`, `audit_dhcp`, `audit_blocking`, `audit_zones`, `audit_security`, `audit_access`, `audit_cluster`, `audit_dnssec`, `audit_queries`, `audit_apps`, `audit_split` | "what is wrong": the servers against each other, records that end nowhere, addresses against their PTRs, records never served, probable slips, what is switched off, DHCP against itself and the zones, what is blocked, zones whose own records do not fit their servers, what is left open, accounts and permissions that are too loose, a cluster that is not whole, keys waiting for something, forwarders that fail and names clients keep asking for that do not exist, apps behind the store, and - asked of a resolver named - where the inside and the outside of a split horizon do not fit |
 
-## Wanted
+## What is not built, and why
 
-| Area | Tools | Answers |
-|---|---|---|
-| deleting what was made | `zone_delete`, `dhcp_scope_delete`: neither is built, on purpose so far - a zone or a scope deleted takes everything in it, and the server's own console asks twice | "take this zone away" |
-| zones, the rest | a zone's update keys (the TSIG policies an update must be signed with), DNSSEC signing, converting a zone's type | "let the DHCP server on the other box update this zone" |
+Each of these is something the server gives no way to do, or that the tools reach another way.
 
-## Audits still wanted
+- **Names that resolve publicly with no internal override.** `audit_split` finds them only among the names it is given or the zones hold: nothing lists what a public zone holds.
+- **Allowed names that no block list blocks any more.** A server says which list blocks a name only by blocking it, so an allowed entry cannot be asked about without taking it off.
+- **Reaching a cluster's nodes through one of them.** The API passes a call on to another node when asked, and the client wraps that (`OnNode`), but only 69 of the 139 calls are passed on, and the list of zones, the settings and everything of DHCP are not among them. A node reached that way could answer only some tools, so every node is configured by its own address.
+- **Client methods with no tool of their own.** The calls a cluster's nodes make of each other (`AdmitSecondaryNode`, `UpdateSecondaryNode`, `TransferConfig`, `NotifySecondary`, `CreateSSOUser`, `SetSSOUser`) are not for anyone else to make. `CreateTokenFor` is what `account_edit` does inside the session it signs in with; `CatalogZones`, `ZonesPage`, `DeleteZones`, `DeleteAddress`, `CacheAbove` and the calls that name a lease by its client identifier are other ways to what `zone_create`, `zone_list`, `zone_delete`, `record_delete`, `cache_get` and the lease tools already do.
 
-Built: the servers against each other, broken and pointless records, addresses and PTRs, records never served, naming, what is switched off, DHCP, blocking, how zones are set up, and what is left open (see Done). Each answers with concrete findings - zone, name, the values at fault, a suggested fix - and `audit_all` runs every one. Still wanted:
+## Known limits
 
-- **Addresses, the rest.** A setting for the local subnets, to add to the ones the reverse zones and the DHCP scopes give: today an address in a network with no reverse zone is found by `audit_reverse`, and the odd address of the other kind by `audit_overlaps`.
-- **Split horizon, the rest.** Names that resolve publicly with no internal override can only be found for names given to `audit_split`: nothing lists what a public zone holds.
-- **Blocking, the rest.** Allowed entries that no list blocks any more, which the API gives no way to ask but one name at a time.
-- **Resolution.** Forwarders that fail or are slow (timed with a test query); DNSSEC validation failures in recent logs; a high SERVFAIL or NXDOMAIN rate; the top NXDOMAIN names from local clients. `server_stats` and `log_search` give the numbers; no audit weighs them yet.
+- **A secondary told of new times for its cluster can stop answering cluster calls.** Seen on 15.6 servers after the API set a cluster's heartbeat and fetch times with a secondary in it, which is the call `cluster_edit` makes for them: not every time, and with `curl` alone, so it is the servers'. The node goes on answering everything else and has to be restarted, or dropped with `cluster_node_delete` and `force`, to be of use to the cluster again. Why is not found; [api-defs/README.md](../api-defs/README.md) has what was seen.
+- **A dry run does not check the token's permissions.** It says what would be done; whether the account may do it is said by the server when the change is made.
+- **Servers older than 15.0.** The client sends its token as a bearer header, which the API reads from 15.0. An older server refuses every call with "invalid token".
+- **A forwarder record has no TTL, and a secondary zone is made only while its primary answers.** Both are the server's own rules, and the tools say so rather than fail later.
 
 ## Open questions
 
-- **Servers older than 15.0.** The client sends its token as a bearer header, which the API reads from 15.0. An older server refuses every call with "invalid token". Supporting one means sending the token in the request body as well.
-- **Clusters, the rest.** The tools say a node's role, which copy of a zone is the primary and where it can be changed, refuse a change asked of a copy and name the server to ask instead, and are tested on a real cluster. Still to do: reaching a cluster's nodes through one of them with the API's `node` parameter, so a cluster is configured once rather than a server at a time.
-- **One process for several servers, or one a server?** embyfin-mcp settled on one instance a server with a `--config` flag. This server holds several because its point is setting them side by side - the zone one node lacks, the record two hold differently - which one instance a server cannot do. Worth confirming, and a `--config` flag may be wanted here too for the same file layout.
-- **A token that sees no zones.** An account that is not a DNS administrator is given no zone's permissions, and the server lists it nothing rather than refusing. `server_info` should say so when the token's account is in that position.
+- **A setting for the local subnets**, to add to the ones the reverse zones and the DHCP scopes give: today an address in a network with no reverse zone is found by `audit_reverse`, and the odd address of the other kind by `audit_overlaps`.
+- **A token that sees no zones.** An account that is not a DNS administrator is shown only the zones whose permissions name it, with no word that others exist. `account_get` and `access_get` show why; `server_info` could say it outright.
+- **`dry_run` or `confirm`.** This server previews a change with `dry_run`, where its sibling servers ask for a second call with `confirm`.
 
-## Guarded / deliberately excluded
+## Guarded
 
-- Nothing that deletes is registered without `--enable-delete`.
-- Not wrapped as tools, ever: creating users and tokens, changing passwords, two-factor setup, backup restore, installing apps from files. `sdk/technitium` may come to cover them - it is a general client - but none is a judgment a model should be making on a DNS server.
+- Nothing that changes a server is registered without `--enable-write`, and nothing that deletes without `--enable-delete` beside it. That includes the whole of accounts, clusters, apps, backups and settings.
+- The tools that could lock the tool out refuse to: the account it works under is not switched off, deleted or taken out of the administrators, its own token is not deleted, and the Administrators group is not given less than everything.
+- No password, token, key or secret is read back in any answer. A token is shown once, when it is made.

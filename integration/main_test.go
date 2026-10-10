@@ -115,3 +115,11 @@ func makeZone(t *testing.T, c *technitium.Client, z technitium.NewZone) {
 		}
 	})
 }
+
+// noCancel is a test's context for its clean-ups, which run after the
+// test's own has been cancelled.
+func noCancel(t *testing.T) context.Context {
+	t.Helper()
+
+	return context.WithoutCancel(t.Context())
+}
