@@ -709,12 +709,14 @@ func TestSettingsAndApps(t *testing.T) {
 			t.Errorf("%s: the console over TLS = %v on %d (signed for itself: %v), in the %s topology", name, got.WebServiceEnableTLS, got.WebServiceTLSPort, got.WebServiceUseSelfSignedCert, world.Topology)
 		}
 		// a cluster makes itself the key its nodes transfer its catalog with,
-		// named for the catalog, and every node has it
+		// named for the catalog, and every node has it; a key another test
+		// made and took away again may still be on a node until it next
+		// fetches the configuration
 		if !clustered && len(got.TSIGKeys) != 0 {
 			t.Errorf("%s: a new server's transfer keys = %+v", name, got.TSIGKeys)
 		}
-		if clustered && (len(got.TSIGKeys) != 1 || got.TSIGKeys[0].Name != testenv.ClusterCatalog || got.TSIGKeys[0].Algorithm == "") {
-			t.Errorf("%s: a cluster node's transfer keys = %+v, want the one named for the catalog", name, got.TSIGKeys)
+		if i := slices.IndexFunc(got.TSIGKeys, func(k technitium.TSIGKey) bool { return k.Name == testenv.ClusterCatalog }); clustered && (i < 0 || got.TSIGKeys[i].Algorithm == "") {
+			t.Errorf("%s: a cluster node's transfer keys = %+v, want the one named for the catalog among them", name, got.TSIGKeys)
 		}
 
 		// the one app the servers are started with: the one that keeps a log of queries to search

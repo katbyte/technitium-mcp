@@ -150,8 +150,8 @@ func TestZoneSetup(t *testing.T) {
 		t.Errorf("two lines of it = %v", paged)
 	}
 
-	// the audits: the name server that is none of these, and nothing else in zones made as they should be
-	wrong, counts := findings(t, "audit_zones", map[string]any{"zone": "*"})
+	// the audits: the name server that is none of these, and nothing else in zones made as they should be. The shape of the reverse zones is other tests' business: one is empty until the write tests put a PTR in it
+	wrong, counts := findings(t, "audit_zones", map[string]any{"zone": "*", "problems": []string{"ns_unknown", "ns_missing", "soa_primary", "transfer_denied", "notify_none"}})
 	stranger := one(t, wrong, "ns_unknown", setupZone)
 	if !strings.Contains(acctest.Str(stranger["detail"]), setupZone+" names "+strangeNS+" as a name server of its own, which is the name of no server asked") || !slices.Equal(acctest.Texts(stranger["servers"]), []string{world.First}) {
 		t.Errorf("the name server that is none of these = %v", stranger)

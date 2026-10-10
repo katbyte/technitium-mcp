@@ -185,11 +185,20 @@ func blockingSettled(ctx context.Context, t *testing.T) {
 	if world.Topology != testenv.Cluster {
 		return
 	}
-	if !acctest.EventuallyWithin(2*time.Minute, func() bool {
-		got, err := server(t, world.Second).Settings(ctx)
+	second := server(t, world.Second)
+	settled := func() bool {
+		got, err := second.Settings(ctx)
 
 		return err == nil && got.EnableBlocking && got.TemporaryDisableBlockingTill == "" && len(got.BlockListURLs) == 0
-	}) {
+	}
+	// the primary tells the second node of a change at once, but a word that was lost is not said again until the node's next fetch, a quarter of an hour away: a node that has not followed in a while is asked to fetch now
+	if acctest.EventuallyWithin(30*time.Second, settled) {
+		return
+	}
+	if err := second.ResyncCluster(ctx); err != nil {
+		t.Logf("%s asked to fetch the configuration: %v", world.Second, err)
+	}
+	if !acctest.EventuallyWithin(2*time.Minute, settled) {
 		t.Errorf("%s never took back the blocking settings %s was left with", world.Second, world.First)
 	}
 }
