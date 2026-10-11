@@ -3,11 +3,11 @@
 # Bring up throwaway Technitium DNS servers in Docker, mint an API token on
 # each, and print the environment the live test suites need.
 #
-#   eval "$(scripts/testenv.sh up single)"   # one server: ns1
-#   eval "$(scripts/testenv.sh add)"         # a second beside it: ns2
-#   eval "$(scripts/testenv.sh up)"          # or both at once (up pair)
-#   scripts/testenv.sh down                  # stop and remove everything
-#   scripts/testenv.sh logs                  # what each server wrote
+#   eval "$(.scripts/testenv.sh up single)"   # one server: ns1
+#   eval "$(.scripts/testenv.sh add)"         # a second beside it: ns2
+#   eval "$(.scripts/testenv.sh up)"          # or both at once (up pair)
+#   .scripts/testenv.sh down                  # stop and remove everything
+#   .scripts/testenv.sh logs                  # what each server wrote
 #
 # technitium-mcp works on one server, on several, and on several that are a
 # cluster, so the suites run against all three, in that order and on the same

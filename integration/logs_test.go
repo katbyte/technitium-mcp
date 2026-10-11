@@ -14,7 +14,7 @@ import (
 	"github.com/katbyte/technitium-mcp/sdk/technitium"
 )
 
-// logApp is the app scripts/testenv.sh gives each server: the one that keeps
+// logApp is the app .scripts/testenv.sh gives each server: the one that keeps
 // a log of queries that can be searched.
 const logApp = "Query Logs (Sqlite)"
 
@@ -36,7 +36,7 @@ func TestQueryLog(t *testing.T) {
 		}
 		i := slices.IndexFunc(apps, func(app technitium.App) bool { return app.Name == logApp })
 		if i < 0 {
-			t.Fatalf("%s has no %s among %+v: scripts/testenv.sh installs it", name, logApp, apps)
+			t.Fatalf("%s has no %s among %+v: .scripts/testenv.sh installs it", name, logApp, apps)
 		}
 		if class, ok := apps[i].QueryLog(); !ok || class == "" {
 			t.Errorf("%s: the log app's log = %q, %v", name, class, ok)

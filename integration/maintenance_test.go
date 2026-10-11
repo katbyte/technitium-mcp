@@ -98,7 +98,7 @@ func TestQueryLogExport(t *testing.T) {
 		}
 	}
 	if q.App == "" {
-		t.Fatalf("no app keeps a log of queries among %+v: scripts/testenv.sh installs one", apps)
+		t.Fatalf("no app keeps a log of queries among %+v: .scripts/testenv.sh installs one", apps)
 	}
 	if _, err := c.Resolve(ctx, technitium.ResolveQuery{Via: "127.0.0.1", Name: "www." + z, Type: "A"}); err != nil {
 		t.Fatal(err)
@@ -253,7 +253,7 @@ func TestAppsInstalledAndRemoved(t *testing.T) {
 		t.Fatalf("the store's %s = %+v among %d apps", name, store, len(store))
 	}
 	if !slices.ContainsFunc(store, func(a technitium.StoreApp) bool { return a.Installed && a.InstalledVersion != "" }) {
-		t.Errorf("no app in the store is said to be installed, and scripts/testenv.sh installs one: %+v", store)
+		t.Errorf("no app in the store is said to be installed, and .scripts/testenv.sh installs one: %+v", store)
 	}
 	installed := func() *technitium.App {
 		t.Helper()

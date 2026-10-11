@@ -145,7 +145,7 @@ func runSuite(m *testing.M) int {
 func start(ctx context.Context) error {
 	var leasing bool
 	if pool, leasing = world.Pool(); !leasing {
-		return errors.New("the environment names no network to lease addresses on, which the DHCP tools are tested by: start the servers with scripts/testenv.sh, which gives one")
+		return errors.New("the environment names no network to lease addresses on, which the DHCP tools are tested by: start the servers with .scripts/testenv.sh, which gives one")
 	}
 	ownZones = append(ownZones, pool.ReverseZone())
 

@@ -406,7 +406,7 @@ func TestApps(t *testing.T) {
 
 	// what is installed, and with the store what else there is
 	if apps := installed(map[string]any{}); len(apps) != 1 || !acctest.BoolOf(apps[0]["logs_queries"]) || apps[0]["version"] == nil || len(acctest.Strs(t, apps[0]["does"], "does")) == 0 {
-		t.Fatalf("app_list = %v, want the one app scripts/testenv.sh installs", apps)
+		t.Fatalf("app_list = %v, want the one app .scripts/testenv.sh installs", apps)
 	}
 	withStore := rowOn(t, suite.Call(t, "app_list", on(map[string]any{"store": true})), first)
 	store := acctest.Rows(t, withStore["store"], "store")
@@ -591,7 +591,7 @@ func TestAuditsOfTheServersThemselves(t *testing.T) {
 		t.Errorf("the administrator's finding = %v", admin)
 	}
 
-	// every server runs the one app scripts/testenv.sh installs, so none runs what another does not
+	// every server runs the one app .scripts/testenv.sh installs, so none runs what another does not
 	for _, f := range findings("audit_apps", nil) {
 		if f["problem"] == "app_only_on" || f["problem"] == "app_versions_differ" {
 			t.Errorf("audit_apps found %v, and the servers were set up alike", f)

@@ -18,12 +18,12 @@
 //
 //	make testacc-integration                 # all three, servers started and torn down
 //
-//	eval "$(scripts/testenv.sh up single)"   # or drive it by hand: one server,
+//	eval "$(.scripts/testenv.sh up single)"   # or drive it by hand: one server,
 //	go test -tags integration ./integration/...
-//	eval "$(scripts/testenv.sh add)"         # a second beside it,
+//	eval "$(.scripts/testenv.sh add)"         # a second beside it,
 //	go test -tags integration ./integration/...
 //	TECHNITIUM_TEST_TOPOLOGY=cluster go test -tags integration ./integration/...   # and the two as a cluster
-//	scripts/testenv.sh down
+//	.scripts/testenv.sh down
 package integration
 
 import (

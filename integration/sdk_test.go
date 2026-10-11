@@ -722,7 +722,7 @@ func TestSettingsAndApps(t *testing.T) {
 		// the one app the servers are started with: the one that keeps a log of queries to search
 		apps, err := c.Apps(t.Context())
 		if err != nil || len(apps) != 1 || apps[0].Name != logApp || apps[0].Version == "" || !apps[0].LogsQueries() {
-			t.Errorf("%s: Apps = %+v, %v, want the log app scripts/testenv.sh installs", name, apps, err)
+			t.Errorf("%s: Apps = %+v, %v, want the log app .scripts/testenv.sh installs", name, apps, err)
 		}
 	}
 }

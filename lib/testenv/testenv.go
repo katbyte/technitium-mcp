@@ -1,5 +1,5 @@
 // Package testenv is what the two live suites share: the servers
-// scripts/testenv.sh started for them, and which of the three ways
+// .scripts/testenv.sh started for them, and which of the three ways
 // technitium-mcp is used they stand for - one server, two that know nothing
 // of each other, or two that are a cluster. The machinery for reading the
 // environment is go-kt's (test/env).
@@ -44,7 +44,7 @@ const (
 )
 
 const (
-	// NS1 and NS2 are the two servers scripts/testenv.sh starts, by the
+	// NS1 and NS2 are the two servers .scripts/testenv.sh starts, by the
 	// names it gives them when there are two.
 	NS1 = "ns1"
 	NS2 = "ns2"
@@ -57,7 +57,7 @@ const (
 
 	// NotConfigured is why a live test skips when the environment names no
 	// servers.
-	NotConfigured = `TECHNITIUM_SERVER and TECHNITIUM_TOKEN are not set: run "make testacc", or eval "$(scripts/testenv.sh up)" first`
+	NotConfigured = `TECHNITIUM_SERVER and TECHNITIUM_TOKEN are not set: run "make testacc", or eval "$(.scripts/testenv.sh up)" first`
 
 	// joinPatience is how long a join is tried for: a server just made a
 	// cluster's primary takes a few seconds to start answering over HTTPS,
@@ -69,7 +69,7 @@ const (
 	settlePatience = 30 * time.Second
 )
 
-// environment is what scripts/testenv.sh writes, every variable of which
+// environment is what .scripts/testenv.sh writes, every variable of which
 // begins TECHNITIUM_.
 var environment = env.New("TECHNITIUM")
 
@@ -104,7 +104,7 @@ func (w *World) Address(name string) string {
 func (w *World) Names() []string { return w.Set.Names() }
 
 // Password is the administrator's password on the servers
-// scripts/testenv.sh started, which signing in to one takes.
+// .scripts/testenv.sh started, which signing in to one takes.
 func (*World) Password() string { return environment.Get("TEST_PASSWORD") }
 
 // Client is the client for one of the servers by name.
@@ -165,7 +165,7 @@ func (p Pool) ReverseZone() string {
 
 // Pool is the range the suites lease from, and whether the environment gave
 // what leasing needs: the network's name and range and a DHCP client's
-// image, as scripts/testenv.sh prints them. Servers started some other way
+// image, as .scripts/testenv.sh prints them. Servers started some other way
 // lease nothing, and the tests that need a lease skip.
 func (*World) Pool() (Pool, bool) {
 	subnet, err := netip.ParsePrefix(environment.Get("TEST_SUBNET"))
@@ -198,7 +198,7 @@ func (*World) Pool() (Pool, bool) {
 // the server's to say.
 func (w *World) Lease(ctx context.Context, hardwareAddress, hostName string) error {
 	if _, ok := w.Pool(); !ok {
-		return fmt.Errorf("%s, %s and %s must name the servers' network, its range and a DHCP client's image, as scripts/testenv.sh prints them", environment.Var("TEST_NETWORK"), environment.Var("TEST_SUBNET"), environment.Var("TEST_CLIENT_IMAGE"))
+		return fmt.Errorf("%s, %s and %s must name the servers' network, its range and a DHCP client's image, as .scripts/testenv.sh prints them", environment.Var("TEST_NETWORK"), environment.Var("TEST_SUBNET"), environment.Var("TEST_CLIENT_IMAGE"))
 	}
 
 	// udhcpc: once (-n -q), in the foreground, with a script that does nothing so the container's own address stays as Docker set it
@@ -267,7 +267,7 @@ func Open(ctx context.Context) (*World, error) {
 	switch topology {
 	case Single:
 		if !slices.Equal(set.Names(), []string{servers.Default}) {
-			return nil, fmt.Errorf("the single topology is one server configured with no name, and the environment names %v: start it with scripts/testenv.sh up single", set.Names())
+			return nil, fmt.Errorf("the single topology is one server configured with no name, and the environment names %v: start it with .scripts/testenv.sh up single", set.Names())
 		}
 
 		return &World{Topology: Single, Set: set, First: servers.Default, addresses: named(environment.Get("TEST_ADDRESSES"), NS1)}, nil
@@ -275,7 +275,7 @@ func Open(ctx context.Context) (*World, error) {
 		// never anything but the two servers the script starts: a suite makes
 		// and deletes zones, and a cluster cannot be unmade again from here
 		if !slices.Equal(set.Names(), []string{NS1, NS2}) {
-			return nil, fmt.Errorf("the %s topology is the two servers scripts/testenv.sh starts, %s and %s, and the environment names %v: never point the suites at servers that are in use", topology, NS1, NS2, set.Names())
+			return nil, fmt.Errorf("the %s topology is the two servers .scripts/testenv.sh starts, %s and %s, and the environment names %v: never point the suites at servers that are in use", topology, NS1, NS2, set.Names())
 		}
 	default:
 		return nil, fmt.Errorf("%s=%q: the topologies are %s, %s and %s", environment.Var("TEST_TOPOLOGY"), topology, Single, Pair, Cluster)
@@ -306,7 +306,7 @@ func (w *World) checkApart(ctx context.Context) error {
 			return fmt.Errorf("%s: %w", srv.Name, err)
 		}
 		if state.Initialized {
-			return fmt.Errorf("%s is a node of the cluster %s, and the pair topology is two servers on their own: the cluster stage runs last, so start fresh servers (scripts/testenv.sh up)", srv.Name, state.Domain)
+			return fmt.Errorf("%s is a node of the cluster %s, and the pair topology is two servers on their own: the cluster stage runs last, so start fresh servers (.scripts/testenv.sh up)", srv.Name, state.Domain)
 		}
 	}
 
@@ -321,7 +321,7 @@ func formCluster(ctx context.Context, set *servers.Set) (*servers.Set, error) {
 	urls, tokens, addresses := named(environment.Server(), ""), named(environment.Token(), ""), named(environment.Get("TEST_ADDRESSES"), "")
 	password := environment.Get("TEST_PASSWORD")
 	if addresses[NS1] == "" || addresses[NS2] == "" || password == "" {
-		return nil, fmt.Errorf("%s and %s must give each server's address and the administrator's password, as scripts/testenv.sh prints them", environment.Var("TEST_ADDRESSES"), environment.Var("TEST_PASSWORD"))
+		return nil, fmt.Errorf("%s and %s must give each server's address and the administrator's password, as .scripts/testenv.sh prints them", environment.Var("TEST_ADDRESSES"), environment.Var("TEST_PASSWORD"))
 	}
 	clustered, err := servers.New([]string{NS1 + "=" + urls[NS1], NS2 + "=" + urls[NS2]}, []string{tokens[NS1]})
 	if err != nil {

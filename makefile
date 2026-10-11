@@ -130,7 +130,7 @@ yamllint: $(YAMLLINT) ## Check YAML files with yamllint (config in .yamllint.yml
 
 shellcheck: $(SHELLCHECK) ## Check shell scripts with shellcheck
 	@echo "==> Checking shell scripts with shellcheck..."
-	@$(SHELLCHECK) scripts/*.sh
+	@$(SHELLCHECK) .scripts/*.sh
 
 zizmor: $(ZIZMOR) ## Audit GitHub workflows for security issues with zizmor
 	@echo "==> Auditing workflows with zizmor..."
@@ -196,16 +196,16 @@ define live
 		env=".testenv-$(1).sh"; \
 		export TECHNITIUM_TEST_CONTAINER=technitium-mcp-$(1); \
 		[ "$(1)" = "integration" ] && export TECHNITIUM_TEST_PORT=15480 || true; \
-		trap 'st=$$?; [ $$st -eq 0 ] || scripts/testenv.sh logs; \
-			scripts/testenv.sh down; rm -f '"$$env"'; exit $$st' EXIT; \
+		trap 'st=$$?; [ $$st -eq 0 ] || .scripts/testenv.sh logs; \
+			.scripts/testenv.sh down; rm -f '"$$env"'; exit $$st' EXIT; \
 		started=""; \
 		for topology in $(TOPOLOGIES); do \
 			echo "==> $(1) on $$topology..."; \
 			case "$$topology$$started" in \
-				single) scripts/testenv.sh up single | grep '^export' > "$$env";; \
+				single) .scripts/testenv.sh up single | grep '^export' > "$$env";; \
 				single?*) echo "single comes first: the servers are already more than one"; exit 1;; \
-				pair | cluster) scripts/testenv.sh up pair | grep '^export' > "$$env";; \
-				pairsingle) scripts/testenv.sh add | grep '^export' > "$$env";; \
+				pair | cluster) .scripts/testenv.sh up pair | grep '^export' > "$$env";; \
+				pairsingle) .scripts/testenv.sh add | grep '^export' > "$$env";; \
 				clustersingle) echo "a cluster is made of the pair: run pair before cluster"; exit 1;; \
 				clusterpair) ;; \
 				*) echo "TOPOLOGIES takes single, pair and cluster, in that order, not $$topology after $$started"; exit 1;; \
@@ -261,10 +261,10 @@ cover-html: cover ## Run every suite with coverage and open the HTML report
 	@go tool cover -html=$(COVERDIR)/coverage.out
 
 testenv-up: ## Start two throwaway Technitium servers and print the environment for them
-	@scripts/testenv.sh up
+	@.scripts/testenv.sh up
 
 testenv-down: ## Remove the throwaway Technitium servers
-	@scripts/testenv.sh down
+	@.scripts/testenv.sh down
 
 check-all: build test testacc lint actionlint yamllint shellcheck depscheck apicheck ## Run build + tests (incl. live) + all linters + depscheck
 

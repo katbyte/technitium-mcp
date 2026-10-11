@@ -53,7 +53,7 @@ func TestDHCP(t *testing.T) {
 	c := first(t)
 	pool, leasing := world.Pool()
 	if !leasing {
-		t.Skip("the environment names no network to lease on: scripts/testenv.sh gives one")
+		t.Skip("the environment names no network to lease on: .scripts/testenv.sh gives one")
 	}
 	const scope, domain = "sdk-dhcp", "sdk-leased.test"
 	const printer, laptop, absent, taken, phone, pinned, twin, outside = "02-42-AC-00-DD-01", "02-42-AC-00-DD-02", "02-42-AC-00-DD-03", "02-42-AC-00-DD-04", "02-42-AC-00-DD-05", "02-42-AC-00-DD-06", "02-42-AC-00-DD-07", "02-42-AC-00-DD-08"

@@ -777,7 +777,7 @@ func TestServerSettings(t *testing.T) {
 		}
 		// the one app the servers are started with, said to be the one that keeps a log to search
 		if apps := acctest.Strs(t, row["apps"], "apps"); len(apps) != 1 || !strings.HasPrefix(apps[0], "Query Logs (Sqlite) ") || !strings.HasSuffix(apps[0], "(keeps a searchable log of queries)") {
-			t.Errorf("%s: apps = %v, want the log app scripts/testenv.sh installs", name, apps)
+			t.Errorf("%s: apps = %v, want the log app .scripts/testenv.sh installs", name, apps)
 		}
 		// a cluster makes itself the key its nodes transfer its catalog with:
 		// given by its name, and nothing of its secret
