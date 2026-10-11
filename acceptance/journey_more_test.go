@@ -108,7 +108,7 @@ func TestJourneyATokenThatMayOnlyLook(t *testing.T) {
 	names(t)
 	const user = "acc-j-viewer"
 	_, _ = suite.Invoke("user_delete", on(map[string]any{"username": user}))
-	suite.Call(t, "user_set", on(map[string]any{"username": user, "new_password": "an acceptance passw0rd"}))
+	suite.Call(t, "user_set", on(map[string]any{"username": user, "new_password": suite.Secret("an acceptance passw0rd")}))
 	t.Cleanup(func() {
 		_, _ = suite.Invoke("access_set", on(map[string]any{"zone": firstZone, "remove_users": []string{user}}))
 		_, _ = suite.Invoke("user_delete", on(map[string]any{"username": user}))
@@ -292,7 +292,7 @@ func TestJourneyWritesDoneTwice(t *testing.T) {
 		{"zone_convert", map[string]any{"zone": busyZone, "type": "Primary"}},
 		{"zone_create", map[string]any{"zone": busyZone}},
 		{"block_set", map[string]any{"name": "twice.acc-j.example"}},
-		{"user_set", map[string]any{"username": user, "new_password": "an acceptance passw0rd", "display_name": "Twice"}},
+		{"user_set", map[string]any{"username": user, "new_password": suite.Secret("an acceptance passw0rd"), "display_name": "Twice"}},
 		{"group_set", map[string]any{"group": group, "description": "made twice", "members": []string{user}}},
 		{"user_set", map[string]any{"username": user, "groups": []string{group}, "display_name": "Twice", "session_timeout_seconds": 1500}},
 		{"access_set", map[string]any{"zone": busyZone, "groups": []map[string]any{{"name": group, "view": true, "modify": true}}}},

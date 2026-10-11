@@ -84,11 +84,11 @@ func TestAccountsGroupsAndTokens(t *testing.T) {
 	if msg := suite.CallErr(t, "user_set", on(map[string]any{"username": user})); !strings.Contains(msg, "give new_password") {
 		t.Errorf("an account made with no password = %q", msg)
 	}
-	dry := suite.Call(t, "user_set", on(map[string]any{"username": user, "new_password": pass, "display_name": "An Acceptance User", "dry_run": true}))
+	dry := suite.Call(t, "user_set", on(map[string]any{"username": user, "new_password": suite.Secret(pass), "display_name": "An Acceptance User", "dry_run": true}))
 	if !slices.Equal(acctest.Strs(t, dry["changes"], "changes"), []string{"would have made the account " + user + " on " + first}) || dry["after"] != nil || listed(user) != nil {
 		t.Errorf("a dry run of making an account = %v", dry)
 	}
-	made := suite.Call(t, "user_set", on(map[string]any{"username": user, "new_password": pass, "display_name": "An Acceptance User"}))
+	made := suite.Call(t, "user_set", on(map[string]any{"username": user, "new_password": suite.Secret(pass), "display_name": "An Acceptance User"}))
 	if after := acctest.Object(t, made["after"], "after"); !acctest.BoolOf(made["created"]) || after["username"] != user || after["display_name"] != "An Acceptance User" || len(acctest.Strs(t, after["groups"], "groups")) != 0 || after["disabled"] != nil {
 		t.Errorf("made = %v", made)
 	}
@@ -176,29 +176,29 @@ func TestAccountsGroupsAndTokens(t *testing.T) {
 	}
 
 	// the account as itself: its own name, a second factor begun and switched on with a code, then taken off, and its password
-	if msg := suite.CallErr(t, "account_edit", on(map[string]any{"username": user, "password": "not its password", "display_name": "x"})); !strings.Contains(msg, "signing in") {
+	if msg := suite.CallErr(t, "account_edit", on(map[string]any{"username": user, "password": suite.Secret("not its password"), "display_name": "x"})); !strings.Contains(msg, "signing in") {
 		t.Errorf("signed in with a wrong password = %q", msg)
 	}
-	begun := suite.Call(t, "account_edit", on(map[string]any{"username": user, "password": pass, "display_name": "Its Own Name", "two_factor": "begin"}))
+	begun := suite.Call(t, "account_edit", on(map[string]any{"username": user, "password": suite.Secret(pass), "display_name": "Its Own Name", "two_factor": "begin"}))
 	totp := acctest.Str(begun["two_factor_secret"])
 	if totp == "" || !strings.Contains(acctest.Str(begun["two_factor_uri"]), "secret="+totp) || len(acctest.Strs(t, begun["changes"], "changes")) != 2 || acctest.Object(t, begun["after"], "after")["display_name"] != "Its Own Name" {
 		t.Fatalf("a second factor begun = %v", begun["changes"])
 	}
-	if msg := suite.CallErr(t, "account_edit", on(map[string]any{"username": user, "password": pass, "two_factor": "enable"})); !strings.Contains(msg, "two_factor_code") {
+	if msg := suite.CallErr(t, "account_edit", on(map[string]any{"username": user, "password": suite.Secret(pass), "two_factor": "enable"})); !strings.Contains(msg, "two_factor_code") {
 		t.Errorf("a second factor switched on with no code = %q", msg)
 	}
-	enabled := suite.Call(t, "account_edit", on(map[string]any{"username": user, "password": pass, "two_factor": "enable", "two_factor_code": oneTimeCode(t, totp)}))
+	enabled := suite.Call(t, "account_edit", on(map[string]any{"username": user, "password": suite.Secret(pass), "two_factor": "enable", "two_factor_code": oneTimeCode(t, totp)}))
 	if !acctest.BoolOf(acctest.Object(t, enabled["after"], "after")["two_factor"]) {
 		t.Errorf("a second factor switched on = %v", enabled)
 	}
-	if msg := suite.CallErr(t, "account_edit", on(map[string]any{"username": user, "password": pass, "display_name": "x"})); !strings.Contains(msg, "signing in") {
+	if msg := suite.CallErr(t, "account_edit", on(map[string]any{"username": user, "password": suite.Secret(pass), "display_name": "x"})); !strings.Contains(msg, "signing in") {
 		t.Errorf("signed in without the second factor = %q", msg)
 	}
-	off := suite.Call(t, "account_edit", on(map[string]any{"username": user, "password": pass, "totp": oneTimeCode(t, totp), "two_factor": "disable", "new_password": pass + " two", "single_use_token": true}))
+	off := suite.Call(t, "account_edit", on(map[string]any{"username": user, "password": suite.Secret(pass), "totp": oneTimeCode(t, totp), "two_factor": "disable", "new_password": suite.Secret(pass) + " two", "single_use_token": true}))
 	if acctest.Object(t, off["after"], "after")["two_factor"] != nil || len(acctest.Str(off["token"])) < 32 || len(acctest.Strs(t, off["changes"], "changes")) != 3 || strings.Contains(fmt.Sprint(off["changes"]), pass) {
 		t.Errorf("the second factor taken off and the password changed = %v", off["changes"])
 	}
-	if msg := suite.CallErr(t, "account_edit", on(map[string]any{"username": user, "password": pass, "display_name": "x"})); !strings.Contains(msg, "signing in") {
+	if msg := suite.CallErr(t, "account_edit", on(map[string]any{"username": user, "password": suite.Secret(pass), "display_name": "x"})); !strings.Contains(msg, "signing in") {
 		t.Errorf("signed in with the old password = %q", msg)
 	}
 
@@ -209,7 +209,7 @@ func TestAccountsGroupsAndTokens(t *testing.T) {
 	}
 
 	// renamed and switched off by the administrator, then deleted with what it had; the group goes too
-	changed := suite.Call(t, "user_set", on(map[string]any{"username": user, "new_username": user + "-renamed", "disabled": true, "new_password": pass}))
+	changed := suite.Call(t, "user_set", on(map[string]any{"username": user, "new_username": user + "-renamed", "disabled": true, "new_password": suite.Secret(pass)}))
 	if after := acctest.Object(t, changed["after"], "after"); after["username"] != user+"-renamed" || !acctest.BoolOf(after["disabled"]) || len(acctest.Strs(t, changed["changes"], "changes")) != 3 {
 		t.Errorf("renamed and switched off = %v", changed)
 	}
@@ -243,7 +243,7 @@ func TestAccess(t *testing.T) {
 	first := world.First
 	const user = "acc-permitted"
 	_, _ = suite.Invoke("user_delete", on(map[string]any{"username": user}))
-	suite.Call(t, "user_set", on(map[string]any{"username": user, "new_password": "an acceptance passw0rd"}))
+	suite.Call(t, "user_set", on(map[string]any{"username": user, "new_password": suite.Secret("an acceptance passw0rd")}))
 	t.Cleanup(func() { _, _ = suite.Invoke("user_delete", on(map[string]any{"username": user})) })
 	as, err := technitium.New(mustClient(t, first).BaseURL(), acctest.Str(suite.Call(t, "token_create", on(map[string]any{"username": user, "token_name": "acc-access"}))["token"]))
 	if err != nil {

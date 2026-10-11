@@ -113,7 +113,7 @@ func TestJourneySetupAndTeardown(t *testing.T) {
 	suite.Call(t, "block_set", on(map[string]any{"name": setupJourneyBlocked}))
 	suite.Call(t, "block_set", on(map[string]any{"name": setupJourneyAllowed, "list": "allowed"}))
 	suite.Call(t, "group_set", on(map[string]any{"group": setupJourneyGroup, "description": "runs " + setupJourneyZone}))
-	suite.Call(t, "user_set", on(map[string]any{"username": setupJourneyUser, "new_password": "a first setup passw0rd", "display_name": "Setup Operator", "groups": []string{setupJourneyGroup}}))
+	suite.Call(t, "user_set", on(map[string]any{"username": setupJourneyUser, "new_password": suite.Secret("a first setup passw0rd"), "display_name": "Setup Operator", "groups": []string{setupJourneyGroup}}))
 	suite.Call(t, "token_create", on(map[string]any{"username": setupJourneyUser, "token_name": setupJourneyToken}))
 	suite.Call(t, "access_set", on(map[string]any{"zone": setupJourneyZone, "groups": []map[string]any{{"name": setupJourneyGroup, "view": true, "modify": true}}}))
 	suite.Call(t, "tsig_key_set", on(map[string]any{"name": setupJourneyKey}))

@@ -155,6 +155,9 @@ type registry struct {
 	// errorLog is where a handler's panic is logged; nil is the process's
 	// log
 	errorLog func(format string, args ...any)
+	// writeLog is where the line for every call of a write or a delete tool
+	// goes, with its credentials blanked; nil is the process's log
+	writeLog func(format string, args ...any)
 }
 
 // toolHints are what a tool tells a client about itself beyond its kind, in
@@ -260,7 +263,7 @@ var toolHints = map[string]mcpregistry.Hints{
 	// an app installed or written over with a newer one; the same again
 	// finds it there. The server fetching it from its maker's store is the
 	// server's own fetch, not this tool sending anything out
-	"app_install": {Idempotent: true},
+	"app_install": {Idempotent: true, Installs: true},
 	// an app's configuration written over; the same again finds it so
 	"app_config_set": {Idempotent: true},
 }
@@ -274,6 +277,11 @@ func (r *registry) queued() *mcpregistry.Registry {
 			Essential: EssentialTools,
 			Hints:     toolHints,
 			LogError:  r.errorLog,
+			LogWrite:  r.writeLog,
+			// what the write line blanks beyond what it blanks by itself (a name ending as a credential's, and everything under a free-form object): a one-time code is a credential for a minute; an app's configuration, and the data of an app's record, are whatever the app keeps, keys among it; and the transfer keys are a setting that carries their secrets, written for a call that is refused as for one that is not
+			SecretArguments: []string{"totp", "two_factor_code", "primary_totp", "config", "tsigKeys", "recordData"},
+			// the free-form arguments the line may write as sent: a server's settings and a record's options, whose names are the server's own and whose credential-named fields are still blanked
+			ShownArguments: map[string][]string{"settings_set": {"settings"}, "record_set": {"options"}},
 		})
 	}
 

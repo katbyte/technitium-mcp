@@ -74,7 +74,7 @@ Settings come from flags, `TECHNITIUM_*` environment variables, or a configurati
 | `--auth-token` | `TECHNITIUM_AUTH_TOKEN` | the bearer token HTTP clients must send; required with `--listen` unless `--allow-no-auth` |
 | `--allow-no-auth` | `TECHNITIUM_ALLOW_NO_AUTH` | serve HTTP with no bearer token: anyone who can reach the port can use every tool |
 
-`TECHNITIUM_LOG` sets the log level (`debug`, `trace`).
+`TECHNITIUM_LOG` sets the log level (`info`, `debug`, `trace`); unset, only warnings and errors are logged. At `info` and below, one line is logged for every call of a tool that changes or deletes: the tool, what it was sent with passwords, codes and keys blanked, and whether it answered, was refused or failed. A dry run is told apart by its `dry_run` argument.
 
 ### Configuration file
 

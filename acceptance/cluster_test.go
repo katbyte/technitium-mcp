@@ -62,7 +62,7 @@ func TestCluster(t *testing.T) {
 				t.Errorf("%s: cluster_create = %q", what, msg)
 			}
 		}
-		join := map[string]any{"primary_url": "https://ns9.acc-cluster.test:53443/", "addresses": []string{address}, "primary_username": "admin", "primary_password": "an acceptance passw0rd", "dry_run": true}
+		join := map[string]any{"primary_url": "https://ns9.acc-cluster.test:53443/", "addresses": []string{address}, "primary_username": "admin", "primary_password": suite.Secret("an acceptance passw0rd"), "dry_run": true}
 		dry = suite.Call(t, "cluster_join", on(join))
 		if got := acctest.Strs(t, dry["changes"], "changes"); len(got) != 1 || !strings.HasPrefix(got[0], "would have had "+first+" join the cluster whose primary is at https://ns9.acc-cluster.test:53443/") || strings.Contains(fmt.Sprint(dry), "passw0rd") {
 			t.Errorf("a dry run of joining a cluster = %v", dry["changes"])

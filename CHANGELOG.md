@@ -2,9 +2,18 @@
 
 ## Unreleased
 
+## 0.2.0 (2026-10-10)
+
 ### Added
 
+- with `TECHNITIUM_LOG=info`, one line is logged for every call of a tool that changes or deletes: the tool, what it was sent, and whether it answered, was refused or failed. No secret reaches it: passwords, one-time codes, a transfer key's secret, an app's configuration and its record's data are blanked, and a dry run is told apart by its `dry_run` argument
+- `app_install` tells a client that it has the server bring something in from outside and run it
 - a journey that makes a first setup from nothing with the tools alone - zones with their records and PTRs, a forwarder zone, a DHCP scope, a blocked and an allowed name, a group with an account, a token and the right to change the zone, a transfer key, a setting, the zone signed - has every audit find nothing of its own, takes it all down again in the order that lets each go, and checks the server holds exactly what it held before
+
+### Changed
+
+- go-kt v0.6.2, from v0.5.1
+- the live suite reads everything every tool says, all run long, for the servers' own password and tokens and for each password and key a test hands a tool, and fails if one was shown
 
 ## 0.1.0 (2026-10-10)
 

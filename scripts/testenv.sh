@@ -51,7 +51,9 @@ PREFIX="${TECHNITIUM_TEST_CONTAINER:-technitium-mcp-test}"
 NETWORK="${PREFIX}-net"
 # ns1 answers on the port, ns2 on the one after it
 PORT="${TECHNITIUM_TEST_PORT:-15380}"
-PASSWORD="technitium-mcp-test"
+# the password is a string nothing else here is called: the acceptance suite reads everything
+# a tool says for it, and a password that is also the token's name is "shown" by every list of tokens
+PASSWORD="an-adm1n-passw0rd-for-the-suites"
 TOKEN_NAME="technitium-mcp-test"
 # the app that keeps a searchable log of queries, and where its file is kept between runs
 LOG_APP="Query Logs (Sqlite)"

@@ -111,6 +111,11 @@ func runSuite(m *testing.M) int {
 	}
 
 	code := m.Run()
+	// no tool may have shown a secret a test gave one: a password, a one-time code, a transfer key's secret
+	if report := suite.LeakReport(); report != "" {
+		fmt.Fprint(os.Stderr, report)
+		code = 1
+	}
 	removeBinary()
 	if err := removeFixtures(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "acceptance teardown:", err)
@@ -160,6 +165,10 @@ func start(ctx context.Context) error {
 	}
 	connected.NotReady = suite.NotReady
 	suite = connected
+	// everything a tool says all run long is read for the servers' own credentials, and for each one a test hands a tool (suite.Secret)
+	for _, secret := range world.Secrets() {
+		suite.Secret(secret)
+	}
 	suite.CannotAnswer = map[string]string{}
 	if alone() {
 		// a copy needs a primary to be a copy of, and one server has no other

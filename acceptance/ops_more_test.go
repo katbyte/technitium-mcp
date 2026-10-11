@@ -117,16 +117,16 @@ func TestSettingsByName(t *testing.T) {
 	if (len(before) > 0) != clustered() {
 		t.Errorf("the keys before one was added = %v: only a cluster has one of its own", before)
 	}
-	dry = suite.Call(t, "tsig_key_set", on(map[string]any{"name": "acc-key.test", "shared_secret": "YWNjZXB0YW5jZS1hY2NlcHRhbmNl", "dry_run": true})) //nolint:gosec // G101: a key made up for the test
+	dry = suite.Call(t, "tsig_key_set", on(map[string]any{"name": "acc-key.test", "shared_secret": suite.Secret("YWNjZXB0YW5jZS1hY2NlcHRhbmNl"), "dry_run": true}))
 	if !slices.Equal(acctest.Strs(t, dry["changes"], "changes"), []string{"would have added the transfer key acc-key.test (hmac-sha256) to " + first}) || !slices.Equal(acctest.Strs(t, dry["keys"], "keys"), before) {
 		t.Errorf("a dry run of adding a key = %v", dry)
 	}
-	added := suite.Call(t, "tsig_key_set", on(map[string]any{"name": "ACC-key.test.", "shared_secret": "YWNjZXB0YW5jZS1hY2NlcHRhbmNl"})) //nolint:gosec // G101: a key made up for the test
+	added := suite.Call(t, "tsig_key_set", on(map[string]any{"name": "ACC-key.test.", "shared_secret": suite.Secret("YWNjZXB0YW5jZS1hY2NlcHRhbmNl")}))
 	if keys := acctest.Strs(t, added["keys"], "keys"); len(keys) != len(before)+1 || !slices.Contains(keys, "acc-key.test") || added["note"] != nil || strings.Contains(acctest.Str(added["changes"]), "YWNj") {
 		t.Errorf("a key added = %v", added)
 	}
 	t.Cleanup(func() { _, _ = suite.Invoke("tsig_key_delete", on(map[string]any{"name": "acc-key.test"})) })
-	if changed := suite.Call(t, "tsig_key_set", on(map[string]any{"name": "acc-key.test", "shared_secret": "Y2hhbmdlZC1jaGFuZ2VkLWNoYW5nZWQ=", "algorithm": "HMAC-SHA512"})); !strings.HasPrefix(acctest.Strs(t, changed["changes"], "changes")[0], "changed the transfer key acc-key.test (hmac-sha512)") || len(acctest.Strs(t, changed["keys"], "keys")) != len(before)+1 { //nolint:gosec // G101: a key made up for the test
+	if changed := suite.Call(t, "tsig_key_set", on(map[string]any{"name": "acc-key.test", "shared_secret": suite.Secret("Y2hhbmdlZC1jaGFuZ2VkLWNoYW5nZWQ="), "algorithm": "HMAC-SHA512"})); !strings.HasPrefix(acctest.Strs(t, changed["changes"], "changes")[0], "changed the transfer key acc-key.test (hmac-sha512)") || len(acctest.Strs(t, changed["keys"], "keys")) != len(before)+1 {
 		t.Errorf("the key changed = %v", changed)
 	}
 	// asked of the one server, since on two that share nothing the other has no such key and the setting differs

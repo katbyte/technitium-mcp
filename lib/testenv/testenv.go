@@ -213,6 +213,19 @@ func (w *World) Lease(ctx context.Context, hardwareAddress, hostName string) err
 	return nil
 }
 
+// Secrets are the servers' own credentials, for a suite to watch every
+// tool's answer for: the administrator's password and each API token.
+func (w *World) Secrets() []string {
+	tokens := named(environment.Token(), "")
+	secrets := make([]string, 0, len(tokens)+1)
+	secrets = append(secrets, w.Password())
+	for _, token := range tokens {
+		secrets = append(secrets, token)
+	}
+
+	return secrets
+}
+
 // named reads a setting of the form name=value,name=value into a map; a
 // value given alone, as one server's is, goes under the name given.
 func named(setting, alone string) map[string]string {
