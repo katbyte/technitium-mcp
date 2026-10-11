@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/katbyte/go-kt/mcp/acctest"
-	mcpregistry "github.com/katbyte/go-kt/mcp/registry"
+	"github.com/katbyte/go-kt/mcp/registry"
 	"github.com/katbyte/technitium-mcp/lib/servers"
 	"github.com/katbyte/technitium-mcp/lib/testenv"
 	"github.com/katbyte/technitium-mcp/sdk/technitium"
@@ -44,7 +44,7 @@ func sessionAs(t *testing.T, token string, opts tools.Options) *acctest.Suite {
 }
 
 // everything is every tool, with leave to change and to delete.
-var everything = tools.Options{Toolsets: []string{mcpregistry.All}, EnableWrite: true, EnableDelete: true}
+var everything = tools.Options{Toolsets: []string{registry.All}, EnableWrite: true, EnableDelete: true}
 
 // A mistake undone from a backup: a zone is backed up, deleted, and put back
 // whole from the file, with the record it had.
@@ -190,8 +190,8 @@ func TestJourneyAnAdministratorWithoutTheSwitches(t *testing.T) {
 
 	names(t)
 	_, token := firstServer(t)
-	reads := sessionAs(t, token, tools.Options{Toolsets: []string{mcpregistry.All}}).ToolNames(t)
-	writes := sessionAs(t, token, tools.Options{Toolsets: []string{mcpregistry.All}, EnableWrite: true}).ToolNames(t)
+	reads := sessionAs(t, token, tools.Options{Toolsets: []string{registry.All}}).ToolNames(t)
+	writes := sessionAs(t, token, tools.Options{Toolsets: []string{registry.All}, EnableWrite: true}).ToolNames(t)
 	all := suite.ToolNames(t)
 
 	for _, tool := range []string{"record_set", "zone_create", "settings_set", "user_set", "cluster_join", "app_install", "block_switch", "dhcp_scope_set"} {
@@ -398,7 +398,7 @@ func TestJourneyReadsChangeNothing(t *testing.T) {
 	if world.Address(first) == "" {
 		delete(args, "audit_split")
 	}
-	described, err := tools.Describe(tools.Options{Toolsets: []string{mcpregistry.All}})
+	described, err := tools.Describe(tools.Options{Toolsets: []string{registry.All}})
 	if err != nil {
 		t.Fatal(err)
 	}

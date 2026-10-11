@@ -6,6 +6,7 @@ dist/
 .tools/bin/
 .tools/cache/
 .tools/venv/
+.tools/npm/
 .env
 .technitium-mcp
 .testenv*.sh

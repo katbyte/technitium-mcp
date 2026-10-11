@@ -80,13 +80,13 @@ Settings come from flags, `TECHNITIUM_*` environment variables, or a configurati
 
 A `.technitium-mcp` file in `$HOME`, and one in the working directory read over it key by key, so a project's file needs only the settings it changes. Keys are the environment variable names, with or without the `TECHNITIUM_` prefix. A flag or an environment variable beats either file.
 
-```
+```sh
 # one server
 SERVER=http://nas:5380
 TOKEN=<token>
 ```
 
-```
+```sh
 # several, each under a name the tools take
 SERVER=ns1=http://192.168.1.2:5380,ns2=http://192.168.1.3:5380
 TOKEN=ns1=<token>,ns2=<token>

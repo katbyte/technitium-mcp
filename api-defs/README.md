@@ -260,6 +260,6 @@ The reader allows for these, and its tests keep them:
 - Three example addresses have no closing backtick (Unsign Zone, Get DS Info, Get User Details).
 - One example address is not on `localhost` (Initialize And Join Cluster).
 - A call's `WHERE:` list sometimes misses a parameter its example address carries (`value` for Delete Record), so both are read.
-- One parameter's name is closed a space late (`primaryZoneTransferProtocol ` for Set Zone Options), which used to end the list there.
+- One parameter's name is closed a space late (`primaryZoneTransferProtocol` and then a space, for Set Zone Options), which used to end the list there.
 - One example address has a parameter with no name (`&=pageNumber=1` for Query Logs), which the reader passes over.
 - Five names in example addresses are ones the server no longer reads and no call's list gives: `allowRecursion`, `allowRecursionOnlyForPrivateNetworks`, `preferIPv6` and `useNxDomainForBlocking` for Set DNS Settings, and `zoneTransferNameServers` for Set Zone Options. They are the whole of `unsent.txt`.

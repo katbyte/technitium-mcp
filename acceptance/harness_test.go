@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/katbyte/go-kt/mcp/acctest"
-	mcpregistry "github.com/katbyte/go-kt/mcp/registry"
+	"github.com/katbyte/go-kt/mcp/registry"
 	"github.com/katbyte/technitium-mcp/lib/testenv"
 	"github.com/katbyte/technitium-mcp/sdk/technitium"
 	"github.com/katbyte/technitium-mcp/tools"
@@ -156,7 +156,7 @@ func start(ctx context.Context) error {
 	}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "technitium", Version: "acceptance"}, nil)
-	if _, err := tools.RegisterAll(srv, world.Set, tools.Options{Toolsets: []string{mcpregistry.All}, EnableWrite: true, EnableDelete: true}); err != nil {
+	if _, err := tools.RegisterAll(srv, world.Set, tools.Options{Toolsets: []string{registry.All}, EnableWrite: true, EnableDelete: true}); err != nil {
 		return err
 	}
 	connected, err := acctest.Connect(ctx, srv)
