@@ -378,12 +378,22 @@ func TestBlockingSwitchedOff(t *testing.T) {
 	if c := check(t, checks, "x."+blockedName, world.First); acctest.BoolOf(c["blocked"]) || c["listed"] != blockedName || c["why"] != "blocking is paused on "+world.First+" until "+until {
 		t.Errorf("a blocked name while blocking is paused = %v", c)
 	}
+	// a cluster's second node counts the pause from when it hears of it, so its end can be a second later and the audit then finds each node's pause apart
 	wrong, _ := findings(t, "audit_blocking", map[string]any{"zone": "*", "problems": []string{"blocking_paused", "blocking_off"}})
-	if len(wrong) != 1 || wrong[0]["problem"] != "blocking_paused" || wrong[0]["detail"] != "blocking is paused until "+until+": nothing is blocked till then" {
-		t.Errorf("the audit of a pause = %v", wrong)
+	if len(wrong) == 0 || len(wrong) > 1 && world.Topology != testenv.Cluster {
+		t.Fatalf("the audit of a pause = %v", wrong)
 	}
-	if on := acctest.Texts(wrong[0]["servers"]); (world.Topology == testenv.Pair) != slices.Equal(on, []string{world.First}) {
-		t.Errorf("the pause is on %v, in the %s topology", on, world.Topology)
+	var pausedOn []string
+	for _, f := range wrong {
+		on := acctest.Texts(f["servers"])
+		if f["problem"] != "blocking_paused" || !strings.HasPrefix(acctest.Str(f["detail"]), "blocking is paused until ") || (len(on) == 0 || slices.Contains(on, world.First)) && f["detail"] != "blocking is paused until "+until+": nothing is blocked till then" {
+			t.Errorf("the audit of a pause = %v", wrong)
+		}
+		pausedOn = append(pausedOn, on...)
+	}
+	slices.Sort(pausedOn)
+	if (world.Topology == testenv.Pair) != slices.Equal(pausedOn, []string{world.First}) {
+		t.Errorf("the pause is on %v, in the %s topology", pausedOn, world.Topology)
 	}
 
 	// switched off, which a pause is not; and back on, which ends either
