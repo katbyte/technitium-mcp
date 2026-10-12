@@ -26,7 +26,7 @@ The file is named for the server version it describes. The highest version here 
 
 `make apicheck` prints how much of the API is wrapped, by area.
 
-The document is a description, not the server. The integration suite (`integration/`) is what proves the client against real servers, and every client method must be called there too.
+The document is a description, not the server. The SDK suite (`acceptance/technitium/`) is what proves the client against real servers, and every client method must be called there too.
 
 ## Refreshing it
 
@@ -73,7 +73,7 @@ Found by the live suites, and kept by `TestWhatAWriteDoesToTheRecordsBesideIt`.
 
 ### Blocking
 
-Found by blocking names on 15.6 servers and asking them for the names, and kept by `TestBlocking` and `TestBlockingSwitched` in the integration suite.
+Found by blocking names on 15.6 servers and asking them for the names, and kept by `TestBlocking` and `TestBlockingSwitched` in the SDK suite.
 
 - **A blocked name's answer says so.** It carries an extended DNS error, `Blocked`, whose text names the source and the entry: `source=blocked-zone; domain=ads.example.net` for the server's own list, and for a list it fetches the list's address as well. `dns_resolve` and `block_check` read it. Asked for the name's TXT record, the server answers with the same text.
 - **An entry stands for every name under it.**
@@ -89,7 +89,7 @@ Found by blocking names on 15.6 servers and asking them for the names, and kept 
 
 ### Statistics
 
-Kept by `TestStats` in the integration suite.
+Kept by `TestStats` in the SDK suite.
 
 - **The server counts by the minute**, and a minute is in the last hour's totals once it is over: a query shows up to a minute after it was asked.
 - **The longer windows are counted by the hour and the day.** The hour in progress was in none of them when this was written; a window given by its own start and end is counted in whole days, today among them.
@@ -98,7 +98,7 @@ Kept by `TestStats` in the integration suite.
 
 ### Making and changing zones and scopes
 
-Kept by `TestZoneChanges` and `TestDHCP` in the integration suite.
+Kept by `TestZoneChanges` and `TestDHCP` in the SDK suite.
 
 - **An SOA is set whole**: every field is sent, the serial as it stands, which the server then counts on from itself.
 - **A list of a zone's options is cleared with `false`**, not with an empty value.
@@ -107,7 +107,7 @@ Kept by `TestZoneChanges` and `TestDHCP` in the integration suite.
 
 ### A zone's options
 
-Kept by `TestZoneOptionsAndExport` in the integration suite.
+Kept by `TestZoneOptionsAndExport` in the SDK suite.
 
 - **A new primary lets its own name servers transfer it and tells them of a change**, lets anyone ask for its names, and takes no updates.
 - **`zones/options/set` changes the options it is sent and leaves the rest**, like the settings and unlike a record.
@@ -117,7 +117,7 @@ Kept by `TestZoneOptionsAndExport` in the integration suite.
 
 ### The log of queries
 
-Kept by `TestQueryLog` in the integration suite, on servers given the Query Logs (Sqlite) app.
+Kept by `TestQueryLog` in the SDK suite, on servers given the Query Logs (Sqlite) app.
 
 - **A server keeps no searchable log by itself.** An app does, and `logs/query` is asked by the app's name and the class of its part that keeps the log, which `apps/list` gives.
 - **A query is in the log a moment after it is asked**, where the statistics take a minute.
@@ -128,7 +128,7 @@ Kept by `TestQueryLog` in the integration suite, on servers given the Query Logs
 
 ### DHCP
 
-Found by having real machines ask a 15.6 server for leases - a DHCP client run on the test servers' own network - and kept by `TestDHCP` in the integration suite.
+Found by having real machines ask a 15.6 server for leases - a DHCP client run on the test servers' own network - and kept by `TestDHCP` in the SDK suite.
 
 - **A scope made with `dhcp/scopes/set` is switched on at once.** Set again with less, it keeps what was left out, its reservations among it: unlike a record's update.
 - **The server takes nearly any reservation.** An address outside the scope's network, one already reserved for another machine, one another machine holds a lease on: all accepted without a word. Only a second reservation for the same machine in the scope is refused. `dhcp_reservation_set` refuses the rest itself.
@@ -161,7 +161,7 @@ Found by making a cluster of two 15.6 servers through the API, which the live su
 
 ### Records of every type
 
-Kept by `TestEveryRecordType` in the integration suite, which adds, changes and deletes one of each.
+Kept by `TestEveryRecordType` in the SDK suite, which adds, changes and deletes one of each.
 
 - **A record's data is read under other names than it is sent under**, for most of the newer types. An SSHFP is read as `algorithm`, `fingerprintType` and `fingerprint` and sent as `sshfpAlgorithm`, `sshfpFingerprintType` and `sshfpFingerprint`; a TLSA, a NAPTR and a URI likewise, each parameter with its type before it; a forwarder's `priority` is sent as `forwarderPriority`; an APP record's `data` is sent as `recordData`. The client keeps one table of both names for every type.
 - **An NS record's glue is given beside its data**, as `glueRecords` on the record, and taken as `glue`.
@@ -189,7 +189,7 @@ Kept by `TestZonesWhole` and `TestForwardersAndImports`.
 
 ### Asking through another name server
 
-Kept by `TestAuditFindsAForwarderThatIsNotThere` in the acceptance suite.
+Kept by `TestAuditFindsAForwarderThatIsNotThere` in the tool suite.
 
 - **A question for the root's name servers (`.`, NS) is taken**, and any resolver that is up answers it in a few tens of milliseconds.
 - **A name server that is not there is given up on after about twenty seconds**, with "request timed out for name server".
@@ -238,6 +238,7 @@ Kept by `TestAllSettings` and `TestBackupAndRestore`.
 - **A setting a later version brought is passed over without a word**: sent to a server that does not have it, `settings/set` answers ok and changes nothing. 15.5 has no `enableCachePrefetch`, which 15.6 brought. Apart from the names above, every setting a server has is in what `settings/get` gives, so one missing from it is one the server lacks: the client makes that an error once the server has answered, and `settings_set` refuses it before anything is sent.
 - **A backup is of what the server has written to disk**, which lags a change to a zone or a list by a few seconds.
 - **A restore on a cluster's primary reaches the other nodes when they next fetch the configuration**, not at once.
+- **Version 15.6.1 fails when a backup's zones are put back and one of them is a zone it does not hold**: `settings/restore` with `zones` alone answers "Object reference not set to an instance of an object", the zone's file is on disk with no permissions beside it, and the server will not start again. 15.6.0 restores the zone. On 15.6.1 it works when the zone is made empty first, or when `authConfig` is restored with `zones`. Found on 2026-10-11, the day 15.6.1 came out, by `TestJourneyAMistakeUndoneFromABackup` in the tool suite; `settings_restore` refuses the restore that fails.
 
 ### In a cluster, the rest
 

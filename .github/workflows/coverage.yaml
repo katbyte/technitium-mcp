@@ -68,6 +68,6 @@ jobs:
       - name: Tear down
         if: always()
         run: |
-          for s in integration acceptance; do
+          for s in sdk tools; do
             TECHNITIUM_TEST_CONTAINER=technitium-mcp-$s .scripts/testenv.sh down || true
           done

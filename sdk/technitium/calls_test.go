@@ -14,7 +14,7 @@ import (
 // The answers below are a Technitium 15.6 server's own, taken from one and
 // cut down. The canned server holds every request against the API document,
 // so each test here also proves its call and parameters are ones the server
-// takes; the integration suite proves the answers against a server running.
+// takes; the SDK suite proves the answers against a server running.
 
 const sessionAnswer = `{"displayName":"Administrator","username":"admin","tokenName":"mcp","token":"5ecre75ecre75ecre7","info":{"version":"15.6","uptimestamp":"2026-10-09T22:35:01.5902233Z","dnsServerDomain":"ns1","defaultRecordTtl":3600,"defaultNsRecordTtl":14400,"defaultSoaRecordTtl":900,"useSoaSerialDateScheme":false,"dnssecValidation":true,"clusterInitialized":true,"clusterDomain":"example.com","permissions":{"Zones":{"canView":true,"canModify":true,"canDelete":false},"Settings":{"canView":false,"canModify":false,"canDelete":false}}},"server":"ns1","status":"ok"}`
 

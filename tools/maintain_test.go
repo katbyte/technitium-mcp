@@ -296,6 +296,25 @@ func TestBackupAndRestoreTools(t *testing.T) {
 		t.Errorf("%d restores reached the server, want the one", len(p.dock.Requests("settings/restore")))
 	}
 
+	// 15.6.1 fails, and then will not start, when a zone it does not hold is put back without the accounts: that restore is refused, and the two that work go
+	p.dock.Answer("settings/get", `{"version":"15.6.1"}`)
+	p.dock.Answer("zones/list", `{"zones":[{"name":"other.example","type":"Primary"}]}`)
+	if got := suite.CallErr(t, "settings_restore", map[string]any{"server": "dock", "path": path, "parts": []string{"zones"}}); !strings.Contains(got, "will not start again") || !strings.Contains(got, "The backup has example.com, which dock does not hold") {
+		t.Errorf("a zone 15.6.1 does not hold, put back alone = %q", got)
+	}
+	if got := suite.CallErr(t, "settings_restore", map[string]any{"server": "dock", "path": path, "parts": []string{"zones"}, "dry_run": true}); !strings.Contains(got, "will not start again") {
+		t.Errorf("a dry run of the same = %q", got)
+	}
+	if len(p.dock.Requests("settings/restore")) != 1 {
+		t.Errorf("%d restores reached the server, want the one from before", len(p.dock.Requests("settings/restore")))
+	}
+	suite.Call(t, "settings_restore", map[string]any{"server": "dock", "path": path, "parts": []string{"zones", "accounts"}})
+	p.dock.Answer("zones/list", `{"zones":[{"name":"Example.com","type":"Primary"}]}`)
+	suite.Call(t, "settings_restore", map[string]any{"server": "dock", "path": path, "parts": []string{"zones"}})
+	if len(p.dock.Requests("settings/restore")) != 3 {
+		t.Errorf("%d restores reached the server, want the two that work on 15.6.1 beside the first", len(p.dock.Requests("settings/restore")))
+	}
+
 	// a restore of the accounts can end the tool's own token: that is the restore working, and is said
 	p.dock.Fail("settings/restore", "invalid-token", "Invalid token or session expired.")
 	ended := suite.Call(t, "settings_restore", map[string]any{"server": "dock", "path": path, "parts": []string{"accounts"}})

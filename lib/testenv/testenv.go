@@ -4,8 +4,8 @@
 // of each other, or two that are a cluster. The machinery for reading the
 // environment is go-kt's (test/env).
 //
-// The integration suite (../../integration) drives the client in
-// sdk/technitium and the acceptance suite (../../acceptance) drives the tools
+// The SDK suite (acceptance/technitium) drives the client in
+// sdk/technitium and the tool suite (acceptance/tools) drives the tools
 // over MCP. Each runs three times on the same servers, in order: on one
 // server, then with a second started beside it, then with the two made a
 // cluster - which this package does, through the client, as part of opening
@@ -411,7 +411,7 @@ func joinNode(ctx context.Context, joining, joined *technitium.Client, name stri
 
 // TakingApart reports whether this run is the one that ends a suite by
 // taking its cluster apart, which nothing can run after: make starts it
-// last, alone (see the makefile's testacc-integration).
+// last, alone (see the makefile's testacc-sdk).
 func (w *World) TakingApart() bool {
 	return w.Topology == Cluster && environment.Get("TEST_APART") != ""
 }

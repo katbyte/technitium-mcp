@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- `settings_restore` refuses to put a zone back onto a server of version 15.6.1 that does not hold it, unless the accounts are restored with it: that version answers with an error and then will not start again. It names the zones and says to make each empty first (`zone_create`) and restore again
+
+### Changed
+
+- every test that runs against real servers is under `acceptance/`: the SDK's in `acceptance/technitium` (`make testacc-sdk`) and the tools' in `acceptance/tools` (`make testacc-tools`), behind the `acceptance` build tag
+
 ## 0.2.0 (2026-10-10)
 
 ### Added

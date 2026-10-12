@@ -5,6 +5,8 @@ version: "2"
 
 run:
   timeout: 60m
+  build-tags:
+    - acceptance # the live suites under acceptance/ are behind this tag, and are linted with the rest
   modules-download-mode: vendor
 
 issues:
@@ -82,7 +84,7 @@ linters:
           - goconst
       # tool names, record types, parameter names, server names and fixture names repeat the same short
       # words by design in the tools, the client and the suites; constants would only add indirection
-      - path: '(tools|sdk/technitium|sdk/apidoc|lib/servers|acceptance|integration)/.*\.go'
+      - path: '(tools|sdk/technitium|sdk/apidoc|lib/servers|acceptance)/.*\.go'
         linters:
           - goconst
       # the idiomatic `if err := f(); err != nil` scoping shadows err on purpose; still flag other variables

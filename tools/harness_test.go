@@ -14,7 +14,7 @@ import (
 // handler makes and the answer it projects, without a container. There are
 // two servers, dock and rpi, because every tool is about several: what one
 // holds and the other lacks is what most of these tests are about. The
-// canned servers hold every request against the API document; the acceptance
+// canned servers hold every request against the API document; the tool
 // suite proves the canned answers match servers that are running.
 
 // everything is the options that register every tool: the ones that change a

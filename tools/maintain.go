@@ -112,6 +112,56 @@ func zipEntries(data []byte) ([]string, error) {
 	return entries, nil
 }
 
+// restoreBreaksVersion is the one version of the server known to fail when a backup's zones are put back and one of them is a zone it does not
+// hold: it answers with an error, and then will not start again. 15.6.0 does not, and nor does 15.6.1 when the accounts are restored with the zones.
+const restoreBreaksVersion = "15.6.1"
+
+// restoreWouldStopTheServer refuses a restore of zones that would leave the server unable to start, naming the zones and the two ways round it.
+func restoreWouldStopTheServer(ctx context.Context, srv *servers.Server, backup []byte) error {
+	inBackup := zonesInBackup(backup)
+	if len(inBackup) == 0 {
+		return nil
+	}
+
+	settings, err := srv.Client.AllSettings(ctx)
+	if err != nil {
+		return fmt.Errorf("reading %s's version before restoring zones onto it: %w", srv.Name, err)
+	}
+	if fmt.Sprint(settings["version"]) != restoreBreaksVersion {
+		return nil
+	}
+
+	held, err := srv.Client.Zones(ctx, technitium.ZoneFilter{})
+	if err != nil {
+		return fmt.Errorf("reading the zones %s holds before restoring zones onto it: %w", srv.Name, err)
+	}
+	missing := slices.DeleteFunc(inBackup, func(zone string) bool {
+		return slices.ContainsFunc(held, func(z technitium.Zone) bool { return strings.EqualFold(z.Name, zone) })
+	})
+	if len(missing) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("%s runs version %s of the server, which fails when a zone it does not hold is put back without the accounts: it answers with an error and then will not start again. The backup has %s, which %s does not hold. Make each as an empty zone first (zone_create) and restore again, or restore accounts with zones, which replaces every account and token. Nothing was changed", srv.Name, restoreBreaksVersion, strings.Join(missing, ", "), srv.Name)
+}
+
+// zonesInBackup is the zones a backup holds a file for, by name.
+func zonesInBackup(data []byte) []string {
+	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil
+	}
+
+	zones := []string{}
+	for _, f := range archive.File {
+		if name, ok := strings.CutPrefix(f.Name, "zones/"); ok && strings.HasSuffix(name, ".zone") {
+			zones = append(zones, strings.TrimSuffix(name, ".zone"))
+		}
+	}
+
+	return zones
+}
+
 func registerMaintainTools(r *registry) {
 	type settingRow struct {
 		Name   string         `json:"name"             jsonschema:"the setting, by the name the server's API knows it under, which is the name settings_set takes"`
@@ -482,7 +532,7 @@ func registerMaintainTools(r *registry) {
 	}
 	add(r, deleteTool, &mcp.Tool{
 		Name:        "settings_restore",
-		Description: "Put parts of a server back from a backup's zip file, writing over what the server has of each: there is no undo, so take a backup of the server as it is first (settings_backup). Only the parts named are touched. Restoring the accounts replaces every account and token, which can end the token this tool works under; restoring web_service can move the console. A backup from one server restored onto another makes the second a copy of the first in those parts, its name and keys included. With dry_run it changes nothing and lists what the backup holds.",
+		Description: "Put parts of a server back from a backup's zip file, writing over what the server has of each: there is no undo, so take a backup of the server as it is first (settings_backup). Only the parts named are touched. Restoring the accounts replaces every account and token, which can end the token this tool works under; restoring web_service can move the console. A backup from one server restored onto another makes the second a copy of the first in those parts, its name and keys included. With dry_run it changes nothing and lists what the backup holds. Version 15.6.1 of the server fails, and then will not start again, when a zone it does not hold is put back without the accounts: that restore is refused, with the two ways round it.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in restoreIn) (*mcp.CallToolResult, restoreOut, error) {
 		items, parts, err := partsOf(in.Parts)
 		if err != nil {
@@ -499,6 +549,12 @@ func registerMaintainTools(r *registry) {
 		files, err := zipEntries(data)
 		if err != nil {
 			return nil, restoreOut{}, fmt.Errorf("%s is no zip file, which is what a backup is: %w", in.Path, err)
+		}
+
+		if items.Zones && !items.AuthConfig {
+			if err := restoreWouldStopTheServer(ctx, srv, data); err != nil {
+				return nil, restoreOut{}, err
+			}
 		}
 
 		out := restoreOut{Server: srv.Name, Changed: true, Files: files}
