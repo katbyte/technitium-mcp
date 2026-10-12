@@ -1,75 +1,57 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 (2026-10-12)
 
-### Fixed
+- **A restore that would stop a server is refused.** Technitium 15.6.1 fails, and then will not start again, when a backup's zone is put back onto a server that no longer holds it. `settings_restore` now refuses that on 15.6.1, names the zones, and says to make each as an empty zone first and restore again. Restoring the accounts with the zones is not affected.
 
-- `settings_restore` refuses to put a zone back onto a server of version 15.6.1 that does not hold it, unless the accounts are restored with it: that version answers with an error and then will not start again. It names the zones and says to make each empty first (`zone_create`) and restore again
-
-### Changed
-
-- every test that runs against real servers is under `acceptance/`: the SDK's in `acceptance/technitium` (`make testacc-sdk`) and the tools' in `acceptance/tools` (`make testacc-tools`), behind the `acceptance` build tag
+- **One home for the tests that run against real servers.** They are all under `acceptance/`, the client's and the tools' side by side, and the code checks now read them as they read everything else.
 
 ## 0.2.0 (2026-10-10)
 
-### Added
+- **A record of every change.** With `TECHNITIUM_LOG=info`, each call of a tool that changes or deletes something is logged in one line: which tool, what it was sent, and whether it worked, was refused or failed. Passwords, one-time codes, key secrets and app configuration are blanked, and a dry run is marked as one.
 
-- with `TECHNITIUM_LOG=info`, one line is logged for every call of a tool that changes or deletes: the tool, what it was sent, and whether it answered, was refused or failed. No secret reaches it: passwords, one-time codes, a transfer key's secret, an app's configuration and its record's data are blanked, and a dry run is told apart by its `dry_run` argument
-- `app_install` tells a client that it has the server bring something in from outside and run it
-- a journey that makes a first setup from nothing with the tools alone - zones with their records and PTRs, a forwarder zone, a DHCP scope, a blocked and an allowed name, a group with an account, a token and the right to change the zone, a transfer key, a setting, the zone signed - has every audit find nothing of its own, takes it all down again in the order that lets each go, and checks the server holds exactly what it held before
+- **Installing an app says what it is.** `app_install` tells the client that it has the server fetch something from outside and run it.
 
-### Changed
+- **A first setup, start to finish, as a test.** One live test builds a whole setup with the tools alone, checks that every audit finds nothing wrong with it, takes it all down again, and checks the server is left exactly as it was.
 
-- go-kt v0.6.2, from v0.5.1
-- the live suite reads everything every tool says, all run long, for the servers' own password and tokens and for each password and key a test hands a tool, and fails if one was shown
+- **Nothing secret is shown.** The live tests read everything every tool says, all run long, and fail if a password, token or key appears.
+
+- **go-kt v0.6.2**, from v0.5.1.
 
 ## 0.1.0 (2026-10-10)
 
-### Added
+The first release: an MCP server, a command line and a Go client for Technitium DNS Server.
 
-- the first three tools, all reads: `server_info` describes each configured server and what the API token may do on it, `zone_list` sets the servers' zones side by side and says where the copies differ, and `zone_records` reads a zone from every server holding it as one table, with filters, counts and paging
-- the audits: `audit_servers` (where the servers do not hold the same), `audit_targets` (records that end nowhere), `audit_reverse` (addresses against their PTRs), `audit_overlaps` (records never served, and wildcards), `audit_naming` (probable slips) and `audit_state` (what is switched off), each giving findings with a fix, and `audit_all` counting what every one found in one reading
-- `server_settings` sets each server's settings side by side, with no secret among them, and names the ones that differ
-- `record_find` searches every zone at once: what holds an address, its PTR and every name that reaches it through a chain of CNAMEs; what points at a name; or any record by name, value, type or comment
-- `audit_names` checks a list of host names against the servers' zones and says which have records, where each ends, and why the rest do not
-- `dns_resolve` asks each server what it really answers for a name, with the chain, and puts the same question to other resolvers
-- `cache_get` and `cache_flush` read and drop what a server's cache keeps for a name
-- `record_set`, `record_delete` and `record_repoint` change records, each with a dry run, PTR handling and the result read back; they keep the comments the server drops from the records beside the one changed
-- DHCP: `dhcp_scopes` sets each server's scopes side by side with how many addresses are free, `dhcp_leases` finds a machine by name, address or hardware address among the leases and the reservations nobody holds, `dhcp_reservation_set` and `dhcp_reservation_delete` keep an address for a machine and stop keeping it, and `dhcp_lease_delete` has a server forget a lease; the changes refuse what the server would accept and could not work, and say what the server does to its zones with them
-- blocking: `block_check` says whether each server blocks a name and by which entry of which list, or why an entry that is there does not block it; `block_list` sets the servers' blocking and their own blocked and allowed lists side by side; `block_set` and `block_delete` put a name on a list and take it off, and ask the server for the name afterwards; `dns_resolve` says when an answer was a block, and by what
-- `audit_blocking` finds blocking that is off or paused, lists that are not fetched or hold nothing, entries that block nothing, and servers that do not block alike
-- `zone_get` sets how each server serves and copies a zone side by side, and `zone_export` gives a zone whole as a zone file
-- `audit_zones` finds NS and SOA records that do not name the servers holding a zone, and primaries that will not feed their copies; `audit_security` finds what is left open: open recursion, a console in the clear, a default password, zones anyone may transfer or change, unused tokens, an old version
-- zones can be made and changed: `zone_create` (primary, secondary or forwarder, a reverse zone by its network, a member of a catalog), `zone_edit` (who may ask, transfer and update, who is notified, on or off, the SOA) and `zone_resync`
-- `dhcp_scope_set` makes and changes DHCP scopes, leaving a new one switched off unless asked and refusing a range another server already leases
-- `block_switch` switches blocking on, off or paused, and `block_lists_set` sets the lists fetched and fetches them
-- `audit_split` holds the zones against what a named outside resolver answers; `audit_naming` also finds a TTL far from its zone's usual one and one host's names written two ways; `audit_overlaps` also finds the odd public address among private ones
-- `log_search` searches the servers' logs of the queries they answered, by name, client, type, result, source and time, and counts the matches by client or by name; it reads the log the Query Logs app keeps, and says which servers have none
-- `server_stats` sets what each server did over a window side by side: queries, how they were answered and from where, the part that failed or was blocked, and the clients and names that lead
-- `audit_dhcp` finds where DHCP and the zones do not agree: one server leasing alone, ranges two servers both lease, reservations that cannot work or have no name, records made by hand at addresses a scope gives out, and records left by leases that are gone
-- every tool only reads unless `--enable-write` is given, and none deletes without `--enable-delete` beside it
-- clusters: `server_info` gives each node's role and the other nodes as it sees them, `zone_list` says where a zone can be changed when some servers hold only a copy, and `zone_records` reads a primary and its copy as one zone
-- several servers in one process, each under a name: `--server ns1=http://192.168.1.2:5380,ns2=http://192.168.1.3:5380`, with a token each or one for all; every tool takes `server`, and a read asks every server unless one is named
-- zones, the rest: `zone_clone` copies a zone under a new name, `zone_convert` turns one into another type where it stands, `zone_import` adds the records of a zone file, and `zone_delete` deletes a zone, saying first what it holds
-- DNSSEC: `dnssec_get` gives how a zone is signed, its keys and the DS records for the parent; `dnssec_sign` and `dnssec_unsign` put signing on and take it off; `dnssec_edit` changes how absence is proved and the DNSKEY TTL; `dnssec_key_add`, `dnssec_key_edit` and `dnssec_key_delete` add a key, publish, roll over and retire keys, and delete one never published
-- clusters, made and unmade: `cluster_get` sets each server's place in a cluster side by side; `cluster_create` and `cluster_join` make one and add a node; `cluster_edit` changes its times, a node's addresses, and has a secondary fetch the configuration now; `cluster_promote` makes a secondary the primary; `cluster_node_delete`, `cluster_leave` and `cluster_delete` shrink and end one
-- accounts and permissions: `user_list`, `user_get`, `user_set` and `user_delete`; `group_list`, `group_set` and `group_delete`; `session_list` and `session_delete` for who is signed in and every API token; `token_create`; `access_get` and `access_set` for who may view, modify and delete in each section and with each zone; `sso_get` and `sso_set` for single sign-on; `account_get` for the account the tool works under, and `account_edit` to change an account as itself, second factor included. The tool refuses to lock itself out, and no password, token or secret is read back
-- every setting: `settings_get` gives all of a server's settings by the API's own names, side by side, and `settings_set` changes any of them; `tsig_key_set` and `tsig_key_delete` add and remove one transfer key, leaving the others
-- what the first audit of a real network taught the audits: a name server or a DHCP name server that is a node of the cluster, or a server configured here, is known even when that server could not be read, where before each became a finding; `audit_dhcp` finds a reservation for a hardware address of all zeros and a scope naming one server twice; `audit_zones` finds reverse zones of one address each, which the server makes for a scope smaller than a /24, and reverse zones with no PTR; `audit_queries` finds a busy client with no name and a name asked for far beyond its TTL by something that does not cache; `audit_access` finds the stock admin account left on beside another administrator; `audit_dnssec` finds signatures the server has let expire; and `audit_naming` no longer calls pimox5a and pimox5b a slip
-- `settings_set` refuses a setting the server's version does not have, where the server would say ok and pass it over: 15.5 lacks `enableCachePrefetch`, which 15.6 brought
-- backups: `settings_backup` writes a server, or parts of it, to a zip file for its owner's eyes only, and `settings_restore` puts parts back
-- the servers' own logs and counters: `log_files`, `log_read` and `log_delete`; `log_export` gives the log of queries as CSV; `server_metrics` gives each server's health check and its counters since it started; `stats_delete` clears the statistics
-- blocking, the rest: `block_import` adds many names at once, `block_flush` empties a list, and `block_tree` walks one too long to read whole
-- DHCP, the rest: `dhcp_lease_reserve` turns the lease a machine holds into a reservation and back, and `dhcp_scope_delete` deletes a scope
-- apps: `app_list` (with what the store offers), `app_install` (from the store, an address or a file), `app_config_get`, `app_config_set` and `app_delete`
-- five more audits, all part of `audit_all`: `audit_cluster` (a cluster that is not whole), `audit_access` (accounts and permissions that leave a server easy to take), `audit_dnssec` (keys waiting for something, or weak), `audit_queries` (a forwarder that does not answer, fails or is slow, found by asking each, and what the last day of queries says is wrong) and `audit_apps` (apps behind the store, or not alike across servers)
-- records of every type: `record_set` and `record_delete` write every record type the server has from one line - HTTPS and SVCB, TLSA, SSHFP, DS, NAPTR, URI, RP, the server's own FWD and APP, and any other type as bytes - with what a type has beside its value (an NS record's glue, how a forwarder is reached, what an app is told) in `options`, which a record keeps when it is changed; the record listings give those options too
-- zones, whole: `zone_create` makes every one of the server's seven zone types, with how a copy transfers and how a forwarder's name server is reached; `zone_edit` sets the keys a transfer may be signed with, the keys a DNS update must be signed with and what each may change, a copy's primary, what a member of a catalog keeps its own setting for, and whether a zone numbers its changes by the day, and switches a zone off and on with the call that needs only the right to modify it
-- `dns_import` copies a name's records in from another name server
-- DHCP scopes, whole: `dhcp_scope_set` sets the rest of what a scope hands out and how it leases - time servers, search domains, static routes, the boot server and file, vendor and numbered options, a ping before leasing - and renames a scope; `dhcp_scopes` gives them
-- smaller things the reading tools pass on: `dns_resolve` asks as if from a network, `log_search` and `log_export` filter by the class a query was asked in, `server_stats` counts every query type and lists the clients held back, and `block_tree` walks a list upward
-- `record_set` with `ptr` and a TTL brings the PTR that names the host to the same TTL
-- four more toolsets for the above: `dnssec`, `cluster`, `admin` and `apps`
-- acceptance journeys, which chain the tools as a session does and read the server back after every write, and tests of the built binary over stdio and HTTP
-- `sdk/technitium`, a Go client for the Technitium DNS Server API written from its API document, which is vendored under `api-defs/` and checked against the client by the tests: it wraps every one of the document's 139 calls and sends every parameter the document gives them, each with a unit test and a test against a real server; the unit tests fail when a call or a parameter of the document is one the client never sends
-- the `serve`, `tools`, `info` and `version` commands, settings from flags, `TECHNITIUM_*` environment variables and `.technitium-mcp` files in `$HOME` and the working directory, and a container image
+- **Several servers as one.** Any number of servers are configured by name, with a token each or one for all. A read asks every server and sets the answers side by side, saying where they differ; a change names the server it is for. Clusters are understood: which node is the primary, and where a zone can be changed.
+
+- **Safe by default.** Every tool only reads unless `--enable-write` is given, and none deletes without `--enable-delete` as well. Every change has a dry run, and reads back what it did. No password, token or secret is ever read back, and the tools refuse to lock themselves out.
+
+- **Reading.** What each server is and what its token may do; its zones and their records as one table; every setting; what it really answers for a name, with the chain, beside what other resolvers say; what its cache holds; who asked for what in its query logs; and what it did over a window of time.
+
+- **Finding things.** One search across every zone: what holds an address, what points at a name, or any record by name, value, type or comment. A list of host names can be checked at once, saying which have records and why the rest do not.
+
+- **Audits.** Seventeen of them, each giving findings with a fix, and one that runs them all: servers that do not hold the same; records that lead nowhere; addresses and their reverse entries that disagree; records never served; probable typing slips and odd lifetimes; zones whose own records do not name their servers; DHCP and DNS that do not agree; blocking that is off or blocks nothing; what is left open to the network; weak accounts and permissions; signing keys that wait on something or are weak; a cluster that is not whole; forwarders that fail or are slow; apps out of date; and a zone held against what the outside world is told.
+
+- **Records.** Records of every type the server has are set, deleted and repointed from one line each, with the matching reverse entry kept in step and the comments the server would drop kept.
+
+- **Zones.** Zones of every type are made, changed, copied, converted, imported from a zone file, exported, resynced and deleted, with who may ask, transfer and update each one.
+
+- **DNSSEC.** A zone is signed and unsigned, its keys added, published, rolled over and retired, and the records its parent needs are given.
+
+- **DHCP.** Scopes with everything they hand out, leases, and reservations. A change that the server would accept and that could not work is refused, such as a range another server already leases.
+
+- **Blocking.** Whether a name is blocked and by which list; names blocked and allowed one at a time or in bulk; blocking switched on, off or paused; and the lists that are fetched.
+
+- **Clusters.** A cluster is made, joined, changed, has a secondary promoted, and is shrunk or ended.
+
+- **Accounts and permissions.** Users, groups, sessions and API tokens, who may do what in each section and zone, single sign-on, and the tool's own account.
+
+- **Settings and upkeep.** Any setting is changed, with one a server's version does not have refused rather than silently passed over. Transfer keys are added and removed one at a time. A server is backed up to a file only its owner can read, and parts are put back. Logs are listed, read, exported and deleted, and statistics cleared.
+
+- **Apps.** Apps are listed with what the store offers, installed, configured and removed.
+
+- **The Go client.** `sdk/technitium` covers every one of the 139 calls in Technitium's API document and every parameter it gives them. The document is kept in the repository, and the tests fail when the client stops matching it.
+
+- **Running it.** The `serve`, `tools`, `info` and `version` commands; settings from flags, `TECHNITIUM_*` environment variables or a `.technitium-mcp` file; toolsets to offer only some of the tools; and a container image.
+
+- **Tested on real servers.** Every tool and every client call is run against throwaway Technitium servers, alone, as a pair and as a cluster, along with the built program itself.
