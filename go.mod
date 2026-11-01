@@ -3,7 +3,7 @@ module github.com/katbyte/technitium-mcp
 go 1.27.0
 
 require (
-	github.com/gookit/color v1.6.1
+	github.com/gookit/color v1.6.3
 	github.com/katbyte/go-kt v0.6.2
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/spf13/cobra v1.10.2
